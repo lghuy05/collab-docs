@@ -7,6 +7,7 @@ import TaskList from '@tiptap/extension-task-list'
 import Link from '@tiptap/extension-link'
 import Table from '@tiptap/extension-table'
 import TableCell from '@tiptap/extension-table-cell'
+import { LineHeightExtension } from '@/extensions/line-height'
 import TableHeader from '@tiptap/extension-table-header'
 import TableRow from '@tiptap/extension-table-row'
 import { Color } from '@tiptap/extension-color'
@@ -17,7 +18,9 @@ import Image from '@tiptap/extension-image'
 import ImageResize from 'tiptap-extension-resize-image'
 import FontFamily from '@tiptap/extension-font-family'
 import TextStyle from '@tiptap/extension-text-style'
+
 import { useEditorStore } from '@/store/use-editor-store'
+import { FontSizeExtension } from '@/extensions/font-size'
 
 export const Editor = () => {
   const { setEditor } = useEditorStore();
@@ -61,9 +64,14 @@ export const Editor = () => {
         defaultProtocol: "https",
       }),
       TaskList,
+      LineHeightExtension.configure({
+        types: ["heading", "paragraph"],
+        defaultLineHeight: "normal",
+      }),
       FontFamily,
       Table,
       TableCell,
+      FontSizeExtension,
       TableHeader,
       TableRow,
       Image,
