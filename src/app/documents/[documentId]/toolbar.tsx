@@ -85,7 +85,7 @@ const FontSizeButton = () => {
       setInputValue(newSize);
       setIsEditing(false);
     }
-  }
+  };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInputValue(e.target.value);
@@ -94,7 +94,7 @@ const FontSizeButton = () => {
 
   const handleInputBlur = () => {
     updateFontSize(inputValue);
-  }
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
@@ -107,7 +107,7 @@ const FontSizeButton = () => {
   const increment = () => {
     const newSize = parseInt(fontSize) + 1;
     updateFontSize(newSize.toString());
-  }
+  };
 
   const decrement = () => {
     const newSize = parseInt(fontSize) - 1;
@@ -115,7 +115,7 @@ const FontSizeButton = () => {
       updateFontSize(newSize.toString());
 
     }
-  }
+  };
 
   return (
     <div className="flex items-center gap-x-0.5">
@@ -516,7 +516,6 @@ const FontFamilyButton = () => {
         >
           <span className="truncate">
             {editor?.getAttributes("textStyle").fontFamily || "Arial"}
-
           </span>
           <ChevronDownIcon className="ml-2 size-4 shrink-0" />
         </button>
@@ -638,7 +637,7 @@ export const Toolbar = () => {
       ]
     ];
   return (
-    <div className="bg-[#F1F4F9] px-2.5 py-0.5 rounded-[24px] min-h-[40px] flex items-center1 gap-x-0.5 overflow-x-auto">
+    <div className="bg-[#F1F4F9] px-2.5 py-0.5 rounded-[24px] min-h-[40px] flex items-center gap-x-0.5 overflow-x-auto">
       {sections[0].map((item) => (
         <ToolbarButton key={item.label}{...item} />
       ))}
