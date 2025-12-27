@@ -12,6 +12,7 @@ import TableRow from '@tiptap/extension-table-row'
 import { Color } from '@tiptap/extension-color'
 import Highlight from '@tiptap/extension-highlight'
 import Underline from '@tiptap/extension-underline'
+import TextAlign from "@tiptap/extension-text-align"
 import Image from '@tiptap/extension-image'
 import ImageResize from 'tiptap-extension-resize-image'
 import FontFamily from '@tiptap/extension-font-family'
@@ -73,6 +74,9 @@ export const Editor = () => {
       }),
       Color,
       TextStyle,
+      TextAlign.configure({
+        types: ["heading", "paragraph"]
+      }),
     ],
     content: `
         <table>
