@@ -4,10 +4,13 @@ import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
+import Link from '@tiptap/extension-link'
 import Table from '@tiptap/extension-table'
 import TableCell from '@tiptap/extension-table-cell'
 import TableHeader from '@tiptap/extension-table-header'
 import TableRow from '@tiptap/extension-table-row'
+import { Color } from '@tiptap/extension-color'
+import Highlight from '@tiptap/extension-highlight'
 import Underline from '@tiptap/extension-underline'
 import Image from '@tiptap/extension-image'
 import ImageResize from 'tiptap-extension-resize-image'
@@ -51,6 +54,11 @@ export const Editor = () => {
     },
     extensions: [StarterKit,
       TaskItem.configure({ nested: true, }),
+      Link.configure({
+        openOnClick: true,
+        autolink: true,
+        defaultProtocol: "https",
+      }),
       TaskList,
       FontFamily,
       Table,
@@ -60,6 +68,10 @@ export const Editor = () => {
       Image,
       ImageResize,
       Underline,
+      Highlight.configure({
+        multicolor: true,
+      }),
+      Color,
       TextStyle,
     ],
     content: `
