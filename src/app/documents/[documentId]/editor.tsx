@@ -23,6 +23,8 @@ import { Ruler } from './ruler'
 import { useEditorStore } from '@/store/use-editor-store'
 import { FontSizeExtension } from '@/extensions/font-size'
 
+import { VimMode } from '@prose-motions/core'
+
 export const Editor = () => {
   const { setEditor } = useEditorStore();
   const editor = useEditor({
@@ -77,6 +79,7 @@ export const Editor = () => {
       TableRow,
       Image,
       ImageResize,
+      VimMode,
       Underline,
       Highlight.configure({
         multicolor: true,
