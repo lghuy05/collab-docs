@@ -11,6 +11,7 @@ import {
   AlertDialogTrigger,
 
 } from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
 import { Id } from "../../convex/_generated/dataModel";
 import { AlertDialogCancel } from "@radix-ui/react-alert-dialog";
 import { useMutation } from "convex/react";
@@ -49,6 +50,7 @@ export const RemoveDialog = ({ documentId, children }: RemoveDialogProps) => {
               e.stopPropagation();
               setIsRemoving(true);
               remove({ id: documentId })
+                .catch(() => toast.error("Something went wrong."))
                 .finally(() => setIsRemoving(false));
             }}
           >
