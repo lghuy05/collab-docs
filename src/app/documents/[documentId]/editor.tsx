@@ -79,7 +79,7 @@ export const Editor = () => {
       TableRow,
       Image,
       ImageResize,
-      // VimMode,
+      VimMode,
       Underline,
       Highlight.configure({
         multicolor: true,
