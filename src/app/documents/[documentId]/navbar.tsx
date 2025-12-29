@@ -20,6 +20,8 @@ import { BoldIcon, FileIcon, FileJsonIcon, FilePenIcon, FilePlusIcon, FilesIcon,
 import { BsFile, BsFilePdf } from "react-icons/bs";
 import { useEditorStore } from "@/store/use-editor-store";
 import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
+import { Inbox } from "./inbox";
+import { Avatars } from "./avatars";
 
 export const NavBar = () => {
 
@@ -211,6 +213,8 @@ export const NavBar = () => {
         </div>
       </div>
       <div className="flex gap-3 items-center pl-6">
+        <Avatars />
+        <Inbox />
         <OrganizationSwitcher
           afterCreateOrganizationUrl="/"
           afterLeaveOrganizationUrl="/"

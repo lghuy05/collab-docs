@@ -3,6 +3,7 @@ import Image from 'next/image';
 import { UserButton, OrganizationSwitcher } from '@clerk/nextjs';
 import { SearchInput } from "./search-input";
 import { Organization } from "@clerk/nextjs/server";
+import { Inbox } from "../documents/[documentId]/inbox";
 
 export const Navbar = () => {
   return (
