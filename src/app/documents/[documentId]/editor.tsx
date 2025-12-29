@@ -25,7 +25,11 @@ import { FontSizeExtension } from '@/extensions/font-size'
 
 import { VimMode } from '@prose-motions/core'
 
+import { useLiveblocksExtension } from "@liveblocks/react-tiptap";
+import { Threads } from './threads'
+
 export const Editor = () => {
+  const liveblocks = useLiveblocksExtension();
   const { setEditor } = useEditorStore();
   const editor = useEditor({
     onCreate({ editor }) {
@@ -59,18 +63,21 @@ export const Editor = () => {
         class: "focus:outline-none print:border-0 bg-white border border-[#C7C7C7] flex flex-col min-h-[1054px] w-[816px] pt-10 pr-14 pb-10 cursor-text"
       },
     },
-    extensions: [StarterKit,
-      TaskItem.configure({ nested: true, }),
-      Link.configure({
-        openOnClick: true,
-        autolink: true,
-        defaultProtocol: "https",
-      }),
+    extensions: [StarterKit.configure({
+      history: false,
+    }),
+    TaskItem.configure({ nested: true, }),
+    Link.configure({
+      openOnClick: true,
+      autolink: true,
+      defaultProtocol: "https",
+    }),
       TaskList,
-      LineHeightExtension.configure({
-        types: ["heading", "paragraph"],
-        defaultLineHeight: "normal",
-      }),
+      liveblocks,
+    LineHeightExtension.configure({
+      types: ["heading", "paragraph"],
+      defaultLineHeight: "normal",
+    }),
       FontFamily,
       Table,
       TableCell,
@@ -79,16 +86,16 @@ export const Editor = () => {
       TableRow,
       Image,
       ImageResize,
-      VimMode,
+      // VimMode,
       Underline,
-      Highlight.configure({
-        multicolor: true,
-      }),
+    Highlight.configure({
+      multicolor: true,
+    }),
       Color,
       TextStyle,
-      TextAlign.configure({
-        types: ["heading", "paragraph"]
-      }),
+    TextAlign.configure({
+      types: ["heading", "paragraph"]
+    }),
     ],
     content: `
       `,
@@ -100,6 +107,7 @@ export const Editor = () => {
       <Ruler />
       <div className='min-w-max flex justify-center w-[816px] py-4 print:py-0 mx-auto print:w-full print:min-w-0'>
         <EditorContent editor={editor}></EditorContent>
+        <Threads editor={editor} />
       </div>
     </div>
   );
