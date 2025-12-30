@@ -18,6 +18,7 @@ import { api } from "../../convex/_generated/api";
 import { ReactNode, useState } from "react";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
+import { toast } from "sonner";
 
 interface RenameDialogProps {
   documentId: Id<"documents">;
@@ -36,6 +37,8 @@ export const RenameDialog = ({ documentId, initialTitle, children }: RenameDialo
     e.preventDefault();
     setIsUpdating(true);
     update({ id: documentId, title: title.trim() || "Untitled" })
+      .catch(() => toast.error("You do not have permission to rename"))
+      .then(() => toast.success("Document renamed"))
       .finally(() => {
         setIsUpdating(false);
         setOpen(false);

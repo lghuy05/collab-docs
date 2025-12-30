@@ -12,6 +12,7 @@ import { useMutation } from "convex/react";
 import { useRouter } from "next/navigation";
 import { api } from "../../../convex/_generated/api";
 import { useState } from "react";
+import { toast } from "sonner";
 
 
 export const TemplateGallery = () => {
@@ -22,7 +23,9 @@ export const TemplateGallery = () => {
   const onTemplateClick = (title: string, initialContent: string) => {
     setIsCreating(true);
     create({ title, initialContent })
+      .catch(() => toast.error("You do not have permission to rename"))
       .then((documentId) => {
+        toast.success("Document created");
         router.push(`/documents/${documentId}`);
       })
       .finally(() => {
