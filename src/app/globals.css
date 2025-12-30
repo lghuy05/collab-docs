@@ -266,7 +266,7 @@ body {
   content: attr(data-vim-mode);
   position: absolute;
   top: 6px;
-  right: 6px;
+  left: 6px;
   padding: 1px 6px;
   border: 1px solid #111;
   border-radius: 6px;
@@ -277,6 +277,10 @@ body {
   color: #111;
   pointer-events: none;
   opacity: 0.85;
+}
+
+.ProseMirror[data-vim-command-active="true"]::after {
+  content: attr(data-vim-mode) " :" attr(data-vim-command);
 }
 
 .ProseMirror.vim-insert-mode::after {
@@ -309,6 +313,11 @@ body {
 .ProseMirror.vim-visual-mode ::selection {
   background: #93c5fd;
   color: #0b1220;
+}
+
+.ProseMirror .vim-search-match {
+  background: #fde68a;
+  color: #111827;
 }
 /* For mobile */
 

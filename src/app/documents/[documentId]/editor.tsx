@@ -29,12 +29,14 @@ import { VimModeExtension } from '@/extensions/vim-mode'
 
 import { useLiveblocksExtension } from "@liveblocks/react-tiptap";
 import { Threads } from './threads'
+import { useRouter } from 'next/navigation'
 
 interface EditorProps {
   initialContent?: string | undefined;
 };
 
 export const Editor = ({ initialContent }: EditorProps) => {
+  const router = useRouter();
   const leftMargin = useStorage((root) => root.leftMargin);
   const rightMargin = useStorage((root) => root.rightMargin);
 
@@ -95,7 +97,9 @@ export const Editor = ({ initialContent }: EditorProps) => {
       TableRow,
       Image,
       ImageResize,
-      VimModeExtension,
+      VimModeExtension.configure({
+        onQuit: () => router.push("/"),
+      }),
       Underline,
     Highlight.configure({
       multicolor: true,

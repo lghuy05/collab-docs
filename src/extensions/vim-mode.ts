@@ -1,7 +1,7 @@
 import { Extension } from "@tiptap/core";
 import { Plugin, Selection, TextSelection, Transaction } from "@tiptap/pm/state";
 import { Slice, Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { Decoration, DecorationSet, EditorView } from "@tiptap/pm/view";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -17,6 +17,23 @@ declare module "@tiptap/core" {
 }
 
 type VimMode = "normal" | "insert" | "visual";
+
+interface VimModeOptions {
+  onQuit?: () => void;
+}
+
+const updateCommandAttributes = (
+  element: HTMLElement,
+  storage: { enabled: boolean; commandActive: boolean; commandBuffer: string }
+) => {
+  if (!storage.enabled || !storage.commandActive) {
+    element.removeAttribute("data-vim-command");
+    element.removeAttribute("data-vim-command-active");
+    return;
+  }
+  element.setAttribute("data-vim-command", storage.commandBuffer);
+  element.setAttribute("data-vim-command-active", "true");
+};
 
 interface PendingOp {
   key: "d" | "y";
@@ -36,11 +53,13 @@ interface PendingMotion {
 interface PendingFind {
   dir: 1 | -1;
   expires: number;
+  type: "f" | "t";
 }
 
 interface LastFind {
   dir: 1 | -1;
   char: string;
+  type: "f" | "t";
 }
 
 interface PendingWordOp {
@@ -54,6 +73,13 @@ const printableChars =
 
 const clampPos = (docSize: number, pos: number) => {
   return Math.max(0, Math.min(docSize, pos));
+};
+
+const isCommandInputKey = (key: string, event: KeyboardEvent) => {
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    return false;
+  }
+  return key.length === 1 && printableChars.includes(key);
 };
 
 const getNormalRange = (doc: Selection["$from"]["doc"], pos: number) => {
@@ -107,8 +133,13 @@ const clampToTextblock = (
   return pos;
 };
 
-export const VimModeExtension = Extension.create({
+export const VimModeExtension = Extension.create<VimModeOptions>({
   name: "vimMode",
+  addOptions() {
+    return {
+      onQuit: undefined,
+    };
+  },
   addStorage() {
     return {
       enabled: true,
@@ -121,6 +152,9 @@ export const VimModeExtension = Extension.create({
       pendingFind: null as PendingFind | null,
       lastFind: null as LastFind | null,
       pendingWordOp: null as PendingWordOp | null,
+      commandActive: false,
+      commandBuffer: "",
+      searchQuery: "",
     };
   },
   addCommands() {
@@ -132,6 +166,8 @@ export const VimModeExtension = Extension.create({
       this.storage.pendingFind = null;
       this.storage.lastFind = null;
       this.storage.pendingWordOp = null;
+      this.storage.commandActive = false;
+      this.storage.commandBuffer = "";
     };
 
     const setCaretSelection = (tr: Transaction, dispatch?: (tr: Transaction) => void) => {
@@ -375,7 +411,7 @@ export const VimModeExtension = Extension.create({
         return null;
       }
       this.storage.pendingFind = null;
-      return findCharInBlock(pending.dir, key);
+      return findCharInBlock(pending.dir, key, pending.type);
     };
 
     const handlePendingMotion = (key: "g", action: () => boolean) => {
@@ -400,6 +436,7 @@ export const VimModeExtension = Extension.create({
     const findCharInBlock = (
       dir: 1 | -1,
       char: string,
+      type: "f" | "t",
       options: { updateLastFind?: boolean } = {}
     ) => {
       const { state } = this.editor;
@@ -409,18 +446,28 @@ export const VimModeExtension = Extension.create({
       const end = $head.end($head.depth);
       const text = state.doc.textBetween(start, end, "\n", "\n");
       const offset = Math.max(0, basePos - start);
+      const searchFrom =
+        dir === 1
+          ? offset + 1
+          : Math.max(0, offset - (this.storage.mode === "visual" ? 2 : 1));
       const nextIndex =
         dir === 1
-          ? text.indexOf(char, offset + 1)
-          : text.lastIndexOf(char, Math.max(0, offset - 1));
+          ? text.indexOf(char, searchFrom)
+          : text.lastIndexOf(char, searchFrom);
 
       if (nextIndex === -1) {
         return true;
       }
 
-      const targetPos = start + nextIndex;
+      let targetPos = start + nextIndex;
+      if (type === "t") {
+        targetPos += dir === 1 ? -1 : 1;
+      }
+      if (this.storage.mode === "visual") {
+        targetPos = clampPos(state.doc.content.size, targetPos + 1);
+      }
       if (options.updateLastFind !== false) {
-        this.storage.lastFind = { dir, char };
+        this.storage.lastFind = { dir, char, type };
       }
       if (this.storage.mode === "visual") {
         return setVisualSelectionAt(targetPos);
@@ -728,9 +775,299 @@ export const VimModeExtension = Extension.create({
       return true;
     };
 
+    const syncCommandUI = () => {
+      updateCommandAttributes(
+        this.editor.view.dom as HTMLElement,
+        this.storage
+      );
+    };
+
+    const exitCommandMode = () => {
+      this.storage.commandActive = false;
+      this.storage.commandBuffer = "";
+      syncCommandUI();
+      return true;
+    };
+
+    const replaceSelection = () => {
+      const { state, view } = this.editor;
+      const { from, to, empty } = state.selection;
+      const marks = empty
+        ? state.storedMarks ?? state.selection.$from.marks()
+        : state.doc.resolve(from).marks();
+      if (!empty) {
+        const tr = state.tr
+          .delete(from, to)
+          .setSelection(TextSelection.create(state.tr.doc, from))
+          .setStoredMarks(marks);
+        view.dispatch(tr);
+      }
+      this.storage.mode = "insert";
+      this.storage.visualAnchor = null;
+      if (empty) {
+        view.dispatch(
+          state.tr
+            .setSelection(TextSelection.create(state.doc, from))
+            .setStoredMarks(marks)
+        );
+      }
+      return true;
+    };
+
+    const executeCommand = () => {
+      const raw = this.storage.commandBuffer.trim();
+      if (!raw) {
+        return exitCommandMode();
+      }
+      const trimmed = raw.startsWith(":") ? raw.slice(1) : raw;
+      if (trimmed.startsWith("/")) {
+        this.storage.searchQuery = trimmed.slice(1);
+        this.editor.view.dispatch(this.editor.state.tr);
+        return exitCommandMode();
+      }
+      const name = trimmed.toLowerCase();
+      const chain = this.editor.chain().focus();
+
+      const toHexColor = (value: string) => {
+        if (!value) {
+          return null;
+        }
+        const normalized = value.startsWith("#") ? value : `#${value}`;
+        if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(normalized)) {
+          return normalized;
+        }
+        return null;
+      };
+
+      if (name === "q" || name === "quit") {
+        exitCommandMode();
+        this.options.onQuit?.();
+        return true;
+      }
+      if (name === "bold") {
+        chain.toggleBold().run();
+        return exitCommandMode();
+      }
+      if (name === "italic") {
+        chain.toggleItalic().run();
+        return exitCommandMode();
+      }
+      if (name === "underline") {
+        chain.toggleUnderline().run();
+        return exitCommandMode();
+      }
+      if (name === "left" || name === "center" || name === "right" || name === "justify") {
+        chain.setTextAlign(name).run();
+        return exitCommandMode();
+      }
+      if (name === "h1" || name === "heading-1") {
+        chain.toggleHeading({ level: 1 }).run();
+        return exitCommandMode();
+      }
+      if (name === "h2" || name === "heading-2") {
+        chain.toggleHeading({ level: 2 }).run();
+        return exitCommandMode();
+      }
+      if (name === "h3" || name === "heading-3") {
+        chain.toggleHeading({ level: 3 }).run();
+        return exitCommandMode();
+      }
+      if (name === "h4" || name === "heading-4") {
+        chain.toggleHeading({ level: 4 }).run();
+        return exitCommandMode();
+      }
+      if (name === "h5" || name === "heading-5") {
+        chain.toggleHeading({ level: 5 }).run();
+        return exitCommandMode();
+      }
+      if (name === "p" || name === "paragraph" || name === "normal") {
+        chain.setParagraph().run();
+        return exitCommandMode();
+      }
+      if (name === "bullet" || name === "bullets" || name === "ul") {
+        chain.toggleBulletList().run();
+        return exitCommandMode();
+      }
+      if (name === "ordered" || name === "ol") {
+        chain.toggleOrderedList().run();
+        return exitCommandMode();
+      }
+      if (name === "todo" || name === "task") {
+        chain.toggleTaskList().run();
+        return exitCommandMode();
+      }
+      if (name === "comment") {
+        chain.addPendingComment().run();
+        return exitCommandMode();
+      }
+      if (name === "rp" || name === "replace") {
+        replaceSelection();
+        return exitCommandMode();
+      }
+      if (name === "remove" || name === "clear" || name === "clean") {
+        chain.unsetAllMarks().run();
+        return exitCommandMode();
+      }
+      if (name === "undo" || name === "u") {
+        chain.undo().run();
+        return exitCommandMode();
+      }
+      if (name === "redo") {
+        chain.redo().run();
+        return exitCommandMode();
+      }
+      if (name === "print") {
+        if (typeof window !== "undefined") {
+          window.print();
+        }
+        return exitCommandMode();
+      }
+      if (name === "spell") {
+        const current = this.editor.view.dom.getAttribute("spellcheck");
+        this.editor.view.dom.setAttribute(
+          "spellcheck",
+          current === "false" ? "true" : "false"
+        );
+        return exitCommandMode();
+      }
+      if (name === "vim") {
+        this.editor.commands.toggleVimMode();
+        return exitCommandMode();
+      }
+      if (name === "noh" || name === "nohl" || name === "nohlsearch") {
+        this.storage.searchQuery = "";
+        this.editor.view.dispatch(this.editor.state.tr);
+        return exitCommandMode();
+      }
+      if (name.startsWith("fs-") || name.startsWith("size-")) {
+        const sizeLabel = name.startsWith("fs-") ? "fs-" : "size-";
+        const size = Number(name.slice(sizeLabel.length));
+        if (!Number.isNaN(size) && size > 0) {
+          chain.setFontSize(`${size}px`).run();
+        }
+        return exitCommandMode();
+      }
+      if (name.startsWith("line-")) {
+        const value = name.slice("line-".length);
+        if (value) {
+          chain.setLineHeight(value).run();
+        }
+        return exitCommandMode();
+      }
+      if (name === "font-tnr") {
+        chain.setFontFamily("Times New Roman").run();
+        return exitCommandMode();
+      }
+      if (name.startsWith("font-")) {
+        const fontKey = name.slice("font-".length);
+        const font = fontKey === "tnr" ? "Times New Roman" : fontKey.replace(/-/g, " ");
+        if (font) {
+          chain.setFontFamily(font).run();
+        }
+        return exitCommandMode();
+      }
+      if (name.startsWith("color-")) {
+        const color = toHexColor(name.slice("color-".length));
+        if (color) {
+          chain.setColor(color).run();
+        }
+        return exitCommandMode();
+      }
+      if (name.startsWith("highlight-")) {
+        const color = toHexColor(name.slice("highlight-".length));
+        if (color) {
+          chain.setHighlight({ color }).run();
+        }
+        return exitCommandMode();
+      }
+      if (name.startsWith("link-")) {
+        const href = name.slice("link-".length);
+        if (href) {
+          chain.extendMarkRange("link").setLink({ href }).run();
+        }
+        return exitCommandMode();
+      }
+      if (name === "unlink") {
+        chain.unsetLink().run();
+        return exitCommandMode();
+      }
+
+      return exitCommandMode();
+    };
+
+    const enterCommandMode = () => {
+      if (this.storage.mode === "insert") {
+        return false;
+      }
+      this.storage.commandActive = true;
+      this.storage.commandBuffer = "";
+      syncCommandUI();
+      return true;
+    };
+
+    const getSearchMatches = (state: Selection["$from"]["doc"], query: string) => {
+      const matches: Array<{ from: number; to: number }> = [];
+      if (!query) {
+        return matches;
+      }
+      state.descendants((node, pos) => {
+        if (!node.isText) {
+          return;
+        }
+        const text = node.text || "";
+        let index = text.indexOf(query);
+        while (index !== -1) {
+          matches.push({ from: pos + index, to: pos + index + query.length });
+          index = text.indexOf(query, index + query.length);
+        }
+      });
+      return matches;
+    };
+
+    const jumpSearch = (dir: 1 | -1) => {
+      if (this.storage.mode === "insert") {
+        return false;
+      }
+      const query = this.storage.searchQuery;
+      if (!query) {
+        return true;
+      }
+      const { state } = this.editor;
+      const matches = getSearchMatches(state.doc, query);
+      if (!matches.length) {
+        return true;
+      }
+      const basePos = getBasePos(this.storage.mode, state.selection);
+      let target = matches[0];
+      if (dir === 1) {
+        target = matches.find((match) => match.from > basePos) || matches[0];
+      } else {
+        for (let i = matches.length - 1; i >= 0; i -= 1) {
+          if (matches[i].from < basePos) {
+            target = matches[i];
+            break;
+          }
+        }
+      }
+      if (this.storage.mode === "visual") {
+        return setVisualSelectionAt(target.from);
+      }
+      return setNormalSelectionAt(target.from);
+    };
+
     const withFind = (key: string, handler: () => boolean) => {
       return () => {
         if (!this.storage.enabled) {
+          return false;
+        }
+        if (this.storage.commandActive) {
+          if (key.length === 1 && printableChars.includes(key)) {
+            this.storage.commandBuffer += key;
+            syncCommandUI();
+          }
+          return true;
+        }
+        if (this.storage.mode === "insert" && key.length === 1) {
           return false;
         }
         const pendingOpMotion = handlePendingOpMotionKey(key);
@@ -754,15 +1091,68 @@ export const VimModeExtension = Extension.create({
         if (!this.storage.enabled) {
           return false;
         }
+        if (this.storage.commandActive) {
+          return false;
+        }
         return handler();
       };
     };
 
+    const repeatLastFind = () => {
+      if (!this.storage.lastFind || this.storage.mode === "insert") {
+        return false;
+      }
+      return findCharInBlock(
+        this.storage.lastFind.dir,
+        this.storage.lastFind.char,
+        this.storage.lastFind.type,
+        { updateLastFind: false }
+      );
+    };
+
+    const repeatLastFindReverse = () => {
+      if (!this.storage.lastFind || this.storage.mode === "insert") {
+        return false;
+      }
+      return findCharInBlock(
+        (this.storage.lastFind.dir * -1) as 1 | -1,
+        this.storage.lastFind.char,
+        this.storage.lastFind.type,
+        { updateLastFind: false }
+      );
+    };
+
     const shortcuts: Record<string, (props?: unknown) => boolean> = {
-      Escape: withEnabled(() => {
+      Escape: () => {
+        if (this.storage.commandActive) {
+          return exitCommandMode();
+        }
         this.editor.commands.enterNormalMode();
         return true;
-      }),
+      },
+      Enter: () => {
+        if (!this.storage.enabled || !this.storage.commandActive) {
+          return false;
+        }
+        return executeCommand();
+      },
+      Backspace: () => {
+        if (!this.storage.enabled || !this.storage.commandActive) {
+          return false;
+        }
+        this.storage.commandBuffer = this.storage.commandBuffer.slice(0, -1);
+        syncCommandUI();
+        return true;
+      },
+      ":": () => {
+        if (!this.storage.enabled) {
+          return false;
+        }
+        if (this.storage.commandActive) {
+          return false;
+        }
+        return enterCommandMode();
+      },
       "Mod-c": withEnabled(() => {
         this.editor.commands.enterNormalMode();
         return true;
@@ -828,7 +1218,13 @@ export const VimModeExtension = Extension.create({
         view.dispatch(tr.scrollIntoView());
         return true;
       }),
-      v: withFind("v", () => {
+      v: () => {
+        if (!this.storage.enabled || this.storage.commandActive) {
+          return false;
+        }
+        if (this.storage.mode === "insert") {
+          return false;
+        }
         if (this.storage.mode !== "visual") {
           this.editor.commands.enterVisualMode();
           this.storage.pendingWordOp = {
@@ -840,7 +1236,7 @@ export const VimModeExtension = Extension.create({
         }
         this.editor.commands.enterNormalMode();
         return true;
-      }),
+      },
       V: withFind("V", () => {
         if (this.storage.mode !== "visual") {
           const { state, view } = this.editor;
@@ -921,37 +1317,37 @@ export const VimModeExtension = Extension.create({
         this.storage.mode === "insert" ? false : pasteAfter()
       ),
       f: withFind("f", () => {
-        if (this.storage.mode !== "normal") {
+        if (this.storage.mode === "insert") {
           return false;
         }
-        this.storage.pendingFind = { dir: 1, expires: Date.now() + 1500 };
+        this.storage.pendingFind = { dir: 1, expires: Date.now() + 1500, type: "f" };
         return true;
       }),
       F: withFind("F", () => {
-        if (this.storage.mode !== "normal") {
+        if (this.storage.mode === "insert") {
           return false;
         }
-        this.storage.pendingFind = { dir: -1, expires: Date.now() + 1500 };
+        this.storage.pendingFind = { dir: -1, expires: Date.now() + 1500, type: "f" };
         return true;
       }),
-      ";": withFind(";", () => {
-        if (!this.storage.lastFind || this.storage.mode === "insert") {
+      t: withFind("t", () => {
+        if (this.storage.mode === "insert") {
           return false;
         }
-        return findCharInBlock(this.storage.lastFind.dir, this.storage.lastFind.char, {
-          updateLastFind: false,
-        });
+        this.storage.pendingFind = { dir: 1, expires: Date.now() + 1500, type: "t" };
+        return true;
       }),
-      ",": withFind(",", () => {
-        if (!this.storage.lastFind || this.storage.mode === "insert") {
+      T: withFind("T", () => {
+        if (this.storage.mode === "insert") {
           return false;
         }
-        return findCharInBlock(
-          (this.storage.lastFind.dir * -1) as 1 | -1,
-          this.storage.lastFind.char,
-          { updateLastFind: false }
-        );
+        this.storage.pendingFind = { dir: -1, expires: Date.now() + 1500, type: "t" };
+        return true;
       }),
+      ";": withFind(";", repeatLastFind),
+      ",": withFind(",", repeatLastFindReverse),
+      Semicolon: withFind("Semicolon", repeatLastFind),
+      Comma: withFind("Comma", repeatLastFindReverse),
       g: withFind("g", () =>
         handlePendingMotion("g", () => setNormalSelectionAt(0))
       ),
@@ -991,6 +1387,8 @@ export const VimModeExtension = Extension.create({
         }
         return false;
       }),
+      n: withFind("n", () => jumpSearch(1)),
+      N: withFind("N", () => jumpSearch(-1)),
     };
 
     for (const char of printableChars) {
@@ -1006,12 +1404,15 @@ export const VimModeExtension = Extension.create({
       if (!this.storage.enabled) {
         element.classList.remove("vim-normal-mode", "vim-visual-mode", "vim-insert-mode");
         element.removeAttribute("data-vim-mode");
+        element.removeAttribute("data-vim-command");
+        element.removeAttribute("data-vim-command-active");
         return;
       }
       element.classList.toggle("vim-normal-mode", this.storage.mode === "normal");
       element.classList.toggle("vim-visual-mode", this.storage.mode === "visual");
       element.classList.toggle("vim-insert-mode", this.storage.mode === "insert");
       element.setAttribute("data-vim-mode", this.storage.mode);
+      updateCommandAttributes(element, this.storage);
     };
 
     return [
@@ -1056,11 +1457,47 @@ export const VimModeExtension = Extension.create({
               element.classList.remove("vim-normal-mode", "vim-visual-mode");
               element.classList.remove("vim-insert-mode");
               element.removeAttribute("data-vim-mode");
+              element.removeAttribute("data-vim-command");
+              element.removeAttribute("data-vim-command-active");
             },
           };
         },
-        handleTextInput: () => {
-          return this.storage.enabled && this.storage.mode !== "insert";
+        handleTextInput: (
+          view: EditorView,
+          _from: number,
+          _to: number,
+          text: string
+        ) => {
+          if (!this.storage.enabled) {
+            return false;
+          }
+          if (this.storage.commandActive) {
+            this.storage.commandBuffer += text;
+            updateCommandAttributes(view.dom as HTMLElement, this.storage);
+            return true;
+          }
+          return this.storage.mode !== "insert";
+        },
+        handleKeyDown: (view: EditorView, event: KeyboardEvent) => {
+          if (
+            this.storage.enabled &&
+            !this.storage.commandActive &&
+            this.storage.mode !== "insert" &&
+            event.key === ":"
+          ) {
+            this.storage.commandActive = true;
+            this.storage.commandBuffer = "";
+            updateCommandAttributes(view.dom as HTMLElement, this.storage);
+            return true;
+          }
+          if (!this.storage.enabled || !this.storage.commandActive) {
+            return false;
+          }
+          if (isCommandInputKey(event.key, event)) {
+            this.storage.commandBuffer += event.key;
+            updateCommandAttributes(view.dom as HTMLElement, this.storage);
+          }
+          return true;
         },
       }),
       new Plugin({
@@ -1069,25 +1506,42 @@ export const VimModeExtension = Extension.create({
             if (!this.storage.enabled) {
               return null;
             }
-            if (this.storage.mode !== "normal") {
+            const decorations: Decoration[] = [];
+            const query = this.storage.searchQuery;
+            if (query) {
+              state.doc.descendants((node, pos) => {
+                if (!node.isText) {
+                  return;
+                }
+                const text = node.text || "";
+                let index = text.indexOf(query);
+                while (index !== -1) {
+                  decorations.push(
+                    Decoration.inline(pos + index, pos + index + query.length, {
+                      class: "vim-search-match",
+                    })
+                  );
+                  index = text.indexOf(query, index + query.length);
+                }
+              });
+            }
+            if (
+              this.storage.mode === "normal" &&
+              state.selection.empty &&
+              state.selection.$head.parent.isTextblock &&
+              state.selection.$head.parent.content.size === 0
+            ) {
+              const widget = Decoration.widget(state.selection.from, () => {
+                const span = document.createElement("span");
+                span.className = "vim-block-cursor";
+                return span;
+              });
+              decorations.push(widget);
+            }
+            if (!decorations.length) {
               return null;
             }
-            if (!state.selection.empty) {
-              return null;
-            }
-            const $head = state.selection.$head;
-            if (!$head.parent.isTextblock) {
-              return null;
-            }
-            if ($head.parent.content.size > 0) {
-              return null;
-            }
-            const widget = Decoration.widget(state.selection.from, () => {
-              const span = document.createElement("span");
-              span.className = "vim-block-cursor";
-              return span;
-            });
-            return DecorationSet.create(state.doc, [widget]);
+            return DecorationSet.create(state.doc, decorations);
           },
         },
       }),
