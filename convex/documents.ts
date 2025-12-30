@@ -44,7 +44,9 @@ export const get = query({
   args: { paginationOpts: paginationOptsValidator, search: v.optional(v.string()) },
   handler: async (ctx, { search, paginationOpts }) => {
     const user = await ctx.auth.getUserIdentity();
-    console.log(user);
+    if (!user) {
+      throw new ConvexError("Unauthorized");
+    }
 
     const organizationId = (user.organization_id ?? undefined) as
       | string

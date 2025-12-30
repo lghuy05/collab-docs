@@ -29,7 +29,6 @@ export const Ruler = () => {
     setIsDraggingRight(true);
   };
   const handleMouseMove = (e: React.MouseEvent) => {
-    const PAGE_WIDTH = 816;
 
     const MINIMUM_SPACE = 100;
 

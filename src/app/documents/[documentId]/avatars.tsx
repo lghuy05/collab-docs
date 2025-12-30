@@ -2,7 +2,7 @@
 import { Separator } from "@/components/ui/separator";
 import { ClientSideSuspense } from "@liveblocks/react";
 
-import { useOther, useOthers, useSelf } from "@liveblocks/react/suspense";
+import { useOthers, useSelf } from "@liveblocks/react/suspense";
 
 const AVATAR_SIZE = 36;
 

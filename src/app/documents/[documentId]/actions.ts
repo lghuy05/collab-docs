@@ -17,7 +17,7 @@ export async function getUsers() {
   }
 
   const clerk = await clerkClient();
-  const orgId = sessionClaims?.o?.id;
+  const orgId = (sessionClaims as { o?: { id?: string } } | null)?.o?.id;
 
   if (!orgId) {
     const user = await clerk.users.getUser(userId);
@@ -26,6 +26,7 @@ export async function getUsers() {
         id: user.id,
         name: user.fullName ?? user.primaryEmailAddress?.emailAddress ?? "Anonymous",
         avatar: user.imageUrl,
+        color: "",
       },
     ];
   }
@@ -38,6 +39,7 @@ export async function getUsers() {
     id: user.id,
     name: user.fullName ?? user.primaryEmailAddress?.emailAddress ?? "Anonymous",
     avatar: user.imageUrl,
+    color: "",
   }));
   return users;
 }

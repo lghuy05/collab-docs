@@ -1,5 +1,4 @@
 "use client"
-import ErrorPage from "@/app/error";
 import { Editor } from "./editor";
 import { NavBar } from "./navbar";
 import { Room } from "./room";
