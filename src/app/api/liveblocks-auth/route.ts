@@ -26,17 +26,23 @@ export async function POST(req: Request) {
     return new Response("Unauthorized", { status: 401 });
   }
   const isOwner = document.ownerId === user.id;
-  const isOrganizationMember = !!(document.organizationId && document.organizationId === sessionClaims.o.id);
+  const orgId = sessionClaims?.o?.id;
+  const isOrganizationMember = !!(document.organizationId && orgId && document.organizationId === orgId);
 
 
   if (!isOwner && !isOrganizationMember) {
     return new Response("Unauthorized", { status: 401 });
   }
+  const name = user.fullName ?? user.primaryEmailAddress?.emailAddress ?? "Anonymous";
+  const nametoNumber = name.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const hue = Math.abs(nametoNumber) % 360;
+  const color = `hsl(${hue}, 80%, 60%)`;
 
   const session = liveblocks.prepareSession(user.id, {
     userInfo: {
-      name: user.fullName ?? "Anonymous",
+      name,
       avatar: user.imageUrl,
+      color,
     },
   });
 

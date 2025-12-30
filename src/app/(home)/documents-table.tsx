@@ -47,7 +47,7 @@ export const DocumentsTable = (
             <TableBody>
               <TableRow className="hover:bg-transparent">
                 <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                  No documments found
+                  No documents found
                 </TableCell>
               </TableRow>
             </TableBody>

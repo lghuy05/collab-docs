@@ -257,6 +257,59 @@ body {
       }
     }
 }
+
+.ProseMirror {
+  position: relative;
+}
+
+.ProseMirror::after {
+  content: attr(data-vim-mode);
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 1px 6px;
+  border: 1px solid #111;
+  border-radius: 6px;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: #fff;
+  color: #111;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.ProseMirror.vim-insert-mode::after {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.ProseMirror.vim-visual-mode::after {
+  border-color: #0ea5e9;
+  color: #0ea5e9;
+}
+
+.ProseMirror .vim-block-cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1em;
+  background: #111;
+  vertical-align: text-bottom;
+}
+
+.ProseMirror.vim-normal-mode {
+  caret-color: transparent;
+}
+
+.ProseMirror.vim-normal-mode ::selection {
+  background: #111;
+  color: #fff;
+}
+
+.ProseMirror.vim-visual-mode ::selection {
+  background: #93c5fd;
+  color: #0b1220;
+}
 /* For mobile */
 
 .floating-threads {

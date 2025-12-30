@@ -11,10 +11,27 @@ export async function getDocuments(ids: Id<"documents">[]) {
 };
 
 export async function getUsers() {
-  const { sessionClaims } = await auth();
+  const { userId, sessionClaims } = await auth();
+  if (!userId) {
+    return [];
+  }
+
   const clerk = await clerkClient();
+  const orgId = sessionClaims?.o?.id;
+
+  if (!orgId) {
+    const user = await clerk.users.getUser(userId);
+    return [
+      {
+        id: user.id,
+        name: user.fullName ?? user.primaryEmailAddress?.emailAddress ?? "Anonymous",
+        avatar: user.imageUrl,
+      },
+    ];
+  }
+
   const response = await clerk.users.getUserList({
-    organizationId: [sessionClaims.o.id as string],
+    organizationId: [orgId],
   });
 
   const users = response.data.map((user) => ({
@@ -24,4 +41,3 @@ export async function getUsers() {
   }));
   return users;
 }
-

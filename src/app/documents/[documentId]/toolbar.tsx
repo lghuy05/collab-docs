@@ -1,5 +1,5 @@
 "use client";
-import { AlignCenterIcon, AlignJustifyIcon, AlignLeftIcon, AlignRightIcon, BoldIcon, ChevronDownIcon, HighlighterIcon, Icon, ImageIcon, ItalicIcon, Link2Icon, ListCollapseIcon, ListIcon, ListOrderedIcon, ListTodoIcon, LucideIcon, MessageSquarePlusIcon, MinusIcon, PlusIcon, PrinterIcon, Redo2Icon, RemoveFormattingIcon, SearchIcon, SpellCheckIcon, Underline, UnderlineIcon, Undo2Icon, UploadIcon } from "lucide-react";
+import { AlignCenterIcon, AlignJustifyIcon, AlignLeftIcon, AlignRightIcon, BoldIcon, ChevronDownIcon, HighlighterIcon, Icon, ImageIcon, ItalicIcon, KeyboardIcon, Link2Icon, ListCollapseIcon, ListIcon, ListOrderedIcon, ListTodoIcon, LucideIcon, MessageSquarePlusIcon, MinusIcon, PlusIcon, PrinterIcon, Redo2Icon, RemoveFormattingIcon, SearchIcon, SpellCheckIcon, Underline, UnderlineIcon, Undo2Icon, UploadIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/store/use-editor-store";
 import { Separator } from "@/components/ui/separator";
@@ -563,6 +563,7 @@ const ToolbarButton = ({
 
 export const Toolbar = () => {
   const { editor } = useEditorStore();
+  const vimEnabled = !!editor?.storage?.vimMode?.enabled;
 
   const sections: {
     label: string;
@@ -593,6 +594,12 @@ export const Toolbar = () => {
             const current = editor?.view.dom.getAttribute("spellcheck");
             editor?.view.dom.setAttribute("spellcheck", current === "false" ? "true" : "false");
           }
+        },
+        {
+          label: "Vim Mode",
+          icon: KeyboardIcon,
+          isActive: vimEnabled,
+          onClick: () => editor?.commands.toggleVimMode(),
         }
       ],
       [
