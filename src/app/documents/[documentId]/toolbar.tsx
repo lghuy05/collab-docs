@@ -2,15 +2,19 @@
 import { AlignCenterIcon, AlignJustifyIcon, AlignLeftIcon, AlignRightIcon, BoldIcon, ChevronDownIcon, HighlighterIcon, ImageIcon, ItalicIcon, KeyboardIcon, Link2Icon, ListCollapseIcon, ListIcon, ListOrderedIcon, ListTodoIcon, LucideIcon, MessageSquarePlusIcon, MinusIcon, PlusIcon, PrinterIcon, Redo2Icon, RemoveFormattingIcon, SearchIcon, SpellCheckIcon, UnderlineIcon, Undo2Icon, UploadIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/store/use-editor-store";
-import { Separator } from "@/components/ui/separator";
-import { DropdownMenu, DropdownMenuItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Separator } from "@/components/ui/separator"; import { DropdownMenu, DropdownMenuItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, } from "@/components/ui/dialog";
 import { type Level } from "@tiptap/extension-heading";
 import { type ColorResult, SketchPicker } from "react-color";
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Doc } from "../../../../convex/_generated/dataModel";
 
+
+interface documentProps {
+  document: Doc<"documents">
+}
 
 const LineHeightButton = () => {
   const { editor } = useEditorStore();
@@ -268,7 +272,8 @@ const AlignButton = () => {
   )
 }
 
-const ImageButton = () => {
+
+const ImageButton = ({ documentId }: { documentId: string }) => {
   const { editor } = useEditorStore();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [imageURL, setImageURL] = useState("");
@@ -276,20 +281,52 @@ const ImageButton = () => {
   const onChange = (src: string) => {
     editor?.chain().focus().setImage({ src }).run();
   };
-
+  //
+  // const onUpload = () => {
+  //   const input = document.createElement("input");
+  //   input.type = "file";
+  //   input.accept = "image/*";
+  //   input.onchange = (e) => {
+  //     const file = (e.target as HTMLInputElement).files?.[0];
+  //     if (file) {
+  //       const imageURL = URL.createObjectURL(file);
+  //       onChange(imageURL);
+  //     }
+  //   }
+  //   input.click();
+  // };
+  //
   const onUpload = () => {
-    const input = document.createElement("input");
+    const input = window.document.createElement("input");
     input.type = "file";
     input.accept = "image/*";
-    input.onchange = (e) => {
+    input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
-      if (file) {
-        const imageURL = URL.createObjectURL(file);
-        onChange(imageURL);
+      if (!file) return;
+      const res = await fetch("/api/uploads/image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contentType: file.type,
+          documentId: documentId,
+        })
+      });
+
+      const { uploadUrl, publicUrl } = await res.json();
+      const put = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": file.type },
+        body: file,
+      });
+      if (!put.ok) {
+        alert("Failed to upload image!");
+        return;
       }
-    }
+      onChange(publicUrl);
+    };
     input.click();
-  };
+  }
+
   const handleImageURLSubmit = () => {
     if (imageURL) {
       onChange(imageURL);
@@ -561,7 +598,7 @@ const ToolbarButton = ({
   )
 }
 
-export const Toolbar = () => {
+export const Toolbar = ({ document }: documentProps) => {
   const { editor } = useEditorStore();
   const vimEnabled = !!editor?.storage?.vimMode?.enabled;
 
@@ -662,7 +699,7 @@ export const Toolbar = () => {
       <HightlightColorButton />
       <Separator orientation="vertical" className="h-6 bg-neutral-300" />
       <LinkButton />
-      <ImageButton />
+      <ImageButton documentId={document._id} />
       <AlignButton />
       <LineHeightButton />
       <ListButton />

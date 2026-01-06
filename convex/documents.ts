@@ -77,13 +77,13 @@ export const get = query({
         .query("documents")
         .withIndex("by_organization_id", (q) => q.eq("organizationId", organizationId))
         .paginate(paginationOpts);
+    } else {
+      //all persnal docs
+      return await ctx.db
+        .query("documents")
+        .withIndex("by_owner_id", (q) => q.eq("ownerId", user.subject))
+        .paginate(paginationOpts);
     }
-
-    //all persnal docs
-    return await ctx.db
-      .query("documents")
-      .withIndex("by_owner_id", (q) => q.eq("ownerId", user.subject))
-      .paginate(paginationOpts);
   },
 });
 
