@@ -24,9 +24,9 @@ export async function POST(req: Request) {
     const publicUrl =
       `${process.env.PUBLIC_S3_BASE_URL}/${key}`;
     return NextResponse.json({ uploadUrl, publicUrl });
-  } catch (e: any) {
+  } catch (e: unknown) {
     return NextResponse.json(
-      { error: e?.message ?? "Failed to generate upload URL" },
+      { error: e instanceof Error ? e.message : "Failed to generate upload URL" },
       { status: 500 }
     );
   }
