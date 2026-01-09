@@ -2,6 +2,7 @@
 
 Collaborative document editor built with Next.js App Router, Convex, and Clerk. It offers a Google Docs-style home screen, template-based creation, and a rich text editor powered by Tiptap.
 
+## Demo vid
 [![Watch the video](https://img.youtube.com/vi/Wjo3DDHh8Uw/maxresdefault.jpg)](https://youtu.be/Wjo3DDHh8Uw)
 
 ## Features
