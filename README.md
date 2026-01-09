@@ -2,6 +2,11 @@
 
 Collaborative document editor built with Next.js App Router, Convex, and Clerk. It offers a Google Docs-style home screen, template-based creation, and a rich text editor powered by Tiptap.
 
+![image alt](https://github.com/lghuy05/collab-docs/blob/7247f5ec71597f22da61b4aea14ca012ff25d540/home.png)
+![image alt](https://github.com/lghuy05/collab-docs/blob/7247f5ec71597f22da61b4aea14ca012ff25d540/vimguide.png)
+![image alt](https://github.com/lghuy05/collab-docs/blob/7247f5ec71597f22da61b4aea14ca012ff25d540/document.png)
+![image alt](https://github.com/lghuy05/collab-docs/blob/7247f5ec71597f22da61b4aea14ca012ff25d540/collaborative1.png)
+
 ## Demo vid
 [![Watch the video](https://img.youtube.com/vi/Wjo3DDHh8Uw/maxresdefault.jpg)](https://youtu.be/Wjo3DDHh8Uw)
 
