@@ -5,7 +5,7 @@ Collaborative document editor built with Next.js App Router, Convex, and Clerk. 
 ![image alt](https://github.com/lghuy05/collab-docs/blob/7247f5ec71597f22da61b4aea14ca012ff25d540/home.png)
 ![image alt](https://github.com/lghuy05/collab-docs/blob/7247f5ec71597f22da61b4aea14ca012ff25d540/vimguide.png)
 ![image alt](https://github.com/lghuy05/collab-docs/blob/7247f5ec71597f22da61b4aea14ca012ff25d540/document.png)
-![image alt](https://github.com/lghuy05/collab-docs/blob/7247f5ec71597f22da61b4aea14ca012ff25d540/collaborative1.png)
+![image alt](https://github.com/lghuy05/collab-docs/blob/fcf4bc32b666b5166f40524abc90e9fc674ba1f4/collaborative2.png)
 
 ## Demo vid
 [![Watch the video](https://img.youtube.com/vi/Wjo3DDHh8Uw/maxresdefault.jpg)](https://youtu.be/Wjo3DDHh8Uw)
