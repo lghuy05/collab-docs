@@ -2,6 +2,7 @@
 
 Collaborative document editor built with Next.js App Router, Convex, and Clerk. It offers a Google Docs-style home screen, template-based creation, and a rich text editor powered by Tiptap.
 
+Try out: https://collab-docs-umber.vercel.app/
 ![image alt](https://github.com/lghuy05/collab-docs/blob/7247f5ec71597f22da61b4aea14ca012ff25d540/home.png)
 ![image alt](https://github.com/lghuy05/collab-docs/blob/7247f5ec71597f22da61b4aea14ca012ff25d540/vimguide.png)
 ![image alt](https://github.com/lghuy05/collab-docs/blob/7247f5ec71597f22da61b4aea14ca012ff25d540/document.png)
