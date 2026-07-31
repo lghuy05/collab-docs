@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter } from 'next/font/google';
+import localFont from "next/font/local";
 import "./globals.css";
 import { NuqsAdapter } from 'nuqs/adapters/next/app';
 import { Toaster } from "@/components/ui/sonner";
@@ -9,8 +9,9 @@ import "@liveblocks/react-ui/styles.css";
 import "@liveblocks/react-tiptap/styles.css";
 import "./globals.css";
 
-const inter = Inter({
-  subsets: ["latin"],
+const geistSans = localFont({
+  src: "./fonts/GeistVF.woff",
+  variable: "--font-geist-sans",
 });
 
 export const metadata: Metadata = {
@@ -26,7 +27,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={inter.className}
+        className={geistSans.className}
       >
         <NuqsAdapter>
           <ConvexClientProvider>
