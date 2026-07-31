@@ -5,7 +5,7 @@ import StarterKit from '@tiptap/starter-kit'
 import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
 import Link from '@tiptap/extension-link'
-import Table from '@tiptap/extension-table'
+import { Table } from '@tiptap/extension-table'
 import TableCell from '@tiptap/extension-table-cell'
 import { LineHeightExtension } from '@/extensions/line-height'
 import TableHeader from '@tiptap/extension-table-header'
@@ -17,7 +17,7 @@ import TextAlign from "@tiptap/extension-text-align"
 import Image from '@tiptap/extension-image'
 import ImageResize from 'tiptap-extension-resize-image'
 import FontFamily from '@tiptap/extension-font-family'
-import TextStyle from '@tiptap/extension-text-style'
+import { TextStyle } from '@tiptap/extension-text-style'
 import { Ruler } from './ruler'
 import { useStorage } from '@liveblocks/react'
 
@@ -75,7 +75,7 @@ export const Editor = ({ initialContent }: EditorProps) => {
       },
     },
     extensions: [StarterKit.configure({
-      history: false,
+      undoRedo: false,
     }),
     TaskItem.configure({ nested: true, }),
     Link.configure({

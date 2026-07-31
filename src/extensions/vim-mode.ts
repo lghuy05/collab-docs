@@ -14,6 +14,24 @@ declare module "@tiptap/core" {
       toggleVimMode: () => ReturnType;
     };
   }
+
+  interface Storage {
+    vimMode: {
+      enabled: boolean;
+      mode: VimMode;
+      visualAnchor: number | null;
+      yankSlice: Slice | null;
+      pendingOp: PendingOp | null;
+      pendingOpMotion: PendingOpMotion | null;
+      pendingMotion: PendingMotion | null;
+      pendingFind: PendingFind | null;
+      lastFind: LastFind | null;
+      pendingWordOp: PendingWordOp | null;
+      commandActive: boolean;
+      commandBuffer: string;
+      searchQuery: string;
+    };
+  }
 }
 
 type VimMode = "normal" | "insert" | "visual";
