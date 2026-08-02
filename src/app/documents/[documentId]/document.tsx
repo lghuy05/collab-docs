@@ -5,6 +5,7 @@ import { Room } from "./room";
 import { Toolbar } from "./toolbar";
 import { Preloaded, usePreloadedQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
+import { VimStatusBar } from "./vim-status-bar";
 
 interface DocumentProps {
   preloadedDocument: Preloaded<typeof api.documents.getById>
@@ -20,11 +21,11 @@ export const Document = ({ preloadedDocument }: DocumentProps) => {
           <Toolbar document={document} />
         </div>
 
-        <div className="pt-[114px] print:pt-0">
+        <div className="pt-[114px] pb-6 print:pt-0 print:pb-0">
           <Editor initialContent={document.initialContent} />
         </div>
+        <VimStatusBar />
       </div>
     </Room>
   );
 }
-

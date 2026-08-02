@@ -263,37 +263,6 @@ body {
   position: relative;
 }
 
-.ProseMirror::after {
-  content: attr(data-vim-mode);
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  padding: 1px 6px;
-  border: 1px solid #111;
-  border-radius: 6px;
-  font-size: 9px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  background: #fff;
-  color: #111;
-  pointer-events: none;
-  opacity: 0.85;
-}
-
-.ProseMirror[data-vim-command-active="true"]::after {
-  content: attr(data-vim-mode) " :" attr(data-vim-command);
-}
-
-.ProseMirror.vim-insert-mode::after {
-  border-color: #2563eb;
-  color: #2563eb;
-}
-
-.ProseMirror.vim-visual-mode::after {
-  border-color: #0ea5e9;
-  color: #0ea5e9;
-}
-
 .ProseMirror .vim-block-cursor {
   display: inline-block;
   width: 0.6em;
