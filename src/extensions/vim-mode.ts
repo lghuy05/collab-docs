@@ -9,11 +9,12 @@ import type {
   PendingMotion,
   PendingOp,
   PendingOpMotion,
+  PendingReplace,
   PendingWordOp,
   VimMode,
   VimModeOptions,
 } from "./vim/types";
-import { getNormalRange } from "./vim/utils";
+import { getNormalCursorPos, getNormalRange } from "./vim/utils";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -39,9 +40,16 @@ declare module "@tiptap/core" {
       pendingFind: PendingFind | null;
       lastFind: LastFind | null;
       pendingWordOp: PendingWordOp | null;
+      pendingReplace: PendingReplace | null;
+      pendingCount: string;
       commandActive: boolean;
       commandBuffer: string;
+      commandPaletteQuery: string;
+      commandSelectionIndex: number | null;
       searchQuery: string;
+      searchDirection: 1 | -1;
+      searchMatchCount: number;
+      searchMatchIndex: number | null;
     };
   }
 }
@@ -65,9 +73,16 @@ export const VimModeExtension = Extension.create<VimModeOptions>({
       pendingFind: null as PendingFind | null,
       lastFind: null as LastFind | null,
       pendingWordOp: null as PendingWordOp | null,
+      pendingReplace: null as PendingReplace | null,
+      pendingCount: "",
       commandActive: false,
       commandBuffer: "",
+      commandPaletteQuery: "",
+      commandSelectionIndex: null,
       searchQuery: "",
+      searchDirection: 1,
+      searchMatchCount: 0,
+      searchMatchIndex: null,
     };
   },
   addCommands() {
@@ -79,8 +94,12 @@ export const VimModeExtension = Extension.create<VimModeOptions>({
       this.storage.pendingFind = null;
       this.storage.lastFind = null;
       this.storage.pendingWordOp = null;
+      this.storage.pendingReplace = null;
+      this.storage.pendingCount = "";
       this.storage.commandActive = false;
       this.storage.commandBuffer = "";
+      this.storage.commandPaletteQuery = "";
+      this.storage.commandSelectionIndex = null;
     };
 
     const setCaretSelection = (tr: Transaction, dispatch?: (tr: Transaction) => void) => {
@@ -96,7 +115,7 @@ export const VimModeExtension = Extension.create<VimModeOptions>({
         if (dispatch) {
           this.storage.mode = "normal";
           this.storage.visualAnchor = null;
-          const basePos = Math.max(0, tr.selection.$head.pos - 1);
+          const basePos = getNormalCursorPos(tr.doc, tr.selection.$head.pos);
           const { from, to } = getNormalRange(tr.doc, basePos);
           dispatch(tr.setSelection(TextSelection.create(tr.doc, from, to)));
         }

@@ -8,6 +8,7 @@ export interface ExecuteVimCommandContext {
   onQuit?: () => void;
   exitCommandMode: () => boolean;
   replaceSelection: () => boolean;
+  jumpSearch?: (direction: 1 | -1) => boolean;
 }
 
 /**
@@ -23,18 +24,23 @@ export const executeVimCommand = ({
   onQuit,
   exitCommandMode,
   replaceSelection,
+  jumpSearch,
 }: ExecuteVimCommandContext) => {
   const raw = storage.commandBuffer.trim();
   if (!raw) {
     return exitCommandMode();
   }
   const trimmed = raw.startsWith(":") ? raw.slice(1) : raw;
-  if (trimmed.startsWith("/")) {
+  if (trimmed.startsWith("/") || trimmed.startsWith("?")) {
     storage.searchQuery = trimmed.slice(1);
+    storage.searchDirection = trimmed.startsWith("?") ? -1 : 1;
     editor.view.dispatch(editor.state.tr);
-    return exitCommandMode();
+    exitCommandMode();
+    return jumpSearch?.(storage.searchDirection) ?? true;
   }
-  const name = trimmed.toLowerCase();
+  const [commandName, ...commandArgs] = trimmed.split(/\s+/u);
+  const name = commandName.toLowerCase();
+  const argument = commandArgs.join(" ").trim();
   const chain = editor.chain().focus();
 
   const toHexColor = (value: string) => {
@@ -64,6 +70,12 @@ export const executeVimCommand = ({
     chain.toggleUnderline().run();
     return exitCommandMode();
   }
+  if (name === "align") {
+    if (["left", "center", "right", "justify"].includes(argument)) {
+      chain.setTextAlign(argument).run();
+    }
+    return exitCommandMode();
+  }
   if (name === "left" || name === "center" || name === "right" || name === "justify") {
     chain.setTextAlign(name).run();
     return exitCommandMode();
@@ -71,6 +83,10 @@ export const executeVimCommand = ({
   const heading = /^(?:h|heading-)([1-5])$/.exec(name);
   if (heading) {
     chain.toggleHeading({ level: Number(heading[1]) as 1 | 2 | 3 | 4 | 5 }).run();
+    return exitCommandMode();
+  }
+  if (name === "heading" && /^[1-5]$/.test(argument)) {
+    chain.toggleHeading({ level: Number(argument) as 1 | 2 | 3 | 4 | 5 }).run();
     return exitCommandMode();
   }
   if (name === "p" || name === "paragraph" || name === "normal") {
@@ -126,7 +142,16 @@ export const executeVimCommand = ({
   }
   if (name === "noh" || name === "nohl" || name === "nohlsearch") {
     storage.searchQuery = "";
+    storage.searchMatchCount = 0;
+    storage.searchMatchIndex = null;
     editor.view.dispatch(editor.state.tr);
+    return exitCommandMode();
+  }
+  if (name === "font-size") {
+    const size = Number(argument);
+    if (!Number.isNaN(size) && size > 0) {
+      chain.setFontSize(`${size}px`).run();
+    }
     return exitCommandMode();
   }
   if (name.startsWith("fs-") || name.startsWith("size-")) {
@@ -144,6 +169,12 @@ export const executeVimCommand = ({
     }
     return exitCommandMode();
   }
+  if (name === "line-height") {
+    if (argument) {
+      chain.setLineHeight(argument).run();
+    }
+    return exitCommandMode();
+  }
   if (name === "font-tnr") {
     chain.setFontFamily("Times New Roman").run();
     return exitCommandMode();
@@ -156,10 +187,30 @@ export const executeVimCommand = ({
     }
     return exitCommandMode();
   }
+  if (name === "font") {
+    if (argument) {
+      chain.setFontFamily(argument).run();
+    }
+    return exitCommandMode();
+  }
+  if (name === "color") {
+    const color = toHexColor(argument);
+    if (color) {
+      chain.setColor(color).run();
+    }
+    return exitCommandMode();
+  }
   if (name.startsWith("color-")) {
     const color = toHexColor(name.slice("color-".length));
     if (color) {
       chain.setColor(color).run();
+    }
+    return exitCommandMode();
+  }
+  if (name === "highlight") {
+    const color = toHexColor(argument);
+    if (color) {
+      chain.setHighlight({ color }).run();
     }
     return exitCommandMode();
   }
@@ -174,6 +225,18 @@ export const executeVimCommand = ({
     const href = name.slice("link-".length);
     if (href) {
       chain.extendMarkRange("link").setLink({ href }).run();
+    }
+    return exitCommandMode();
+  }
+  if (name === "link") {
+    if (argument) {
+      chain.extendMarkRange("link").setLink({ href: argument }).run();
+    }
+    return exitCommandMode();
+  }
+  if (name === "image") {
+    if (argument) {
+      chain.setImage({ src: argument }).run();
     }
     return exitCommandMode();
   }
