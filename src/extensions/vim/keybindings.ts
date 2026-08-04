@@ -1,0 +1,1024 @@
+import type { Editor } from "@tiptap/core";
+import { Selection, TextSelection } from "@tiptap/pm/state";
+import { canSplit } from "@tiptap/pm/transform";
+
+import { executeVimCommand } from "./ex-commands";
+import type { VimModeOptions, VimModeStorage } from "./types";
+import {
+  clampPos,
+  clampToTextblock,
+  getBasePos,
+  getNormalRange,
+  printableChars,
+  updateCommandAttributes,
+} from "./utils";
+
+export interface VimKeyboardContext {
+  editor: Editor;
+  options: VimModeOptions;
+  storage: VimModeStorage;
+}
+
+/**
+ * The modal input engine. It preserves the existing key behavior while
+ * keeping keyboard parsing separate from the Tiptap extension lifecycle.
+ */
+export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
+    // Normal mode uses a 1-char selection to emulate a block cursor.
+    const setNormalSelectionAt = (pos: number) => {
+      const { state, view } = context.editor;
+      const { from, to } = getNormalRange(state.doc, pos);
+      view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, from, to)));
+      return true;
+    };
+
+    // Visual mode keeps an anchor and extends the range with movement.
+    const setVisualSelectionAt = (pos: number) => {
+      const { state, view } = context.editor;
+      const anchor = context.storage.visualAnchor ?? state.selection.$head.pos;
+      view.dispatch(
+        state.tr.setSelection(TextSelection.create(state.doc, anchor, pos))
+      );
+      return true;
+    };
+
+    // Insert mode drops the selection to a caret.
+    const enterInsertAt = (pos: number) => {
+      const { state, view } = context.editor;
+      context.storage.mode = "insert";
+      context.storage.visualAnchor = null;
+      view.dispatch(
+        state.tr.setSelection(
+          TextSelection.create(state.doc, clampPos(state.doc.content.size, pos))
+        )
+      );
+      return true;
+    };
+
+    const moveBy = (delta: number) => {
+      return () => {
+        const { state } = context.editor;
+        const basePos = getBasePos(context.storage.mode, state.selection);
+        const newPos = clampToTextblock(
+          state,
+          clampPos(state.doc.content.size, basePos + delta),
+          basePos
+        );
+
+        if (context.storage.mode === "normal") {
+          return setNormalSelectionAt(newPos);
+        }
+
+        if (context.storage.mode === "visual") {
+          return setVisualSelectionAt(newPos);
+        }
+
+        return false;
+      };
+    };
+
+    const moveLine = (dir: number) => {
+      return () => {
+        const { state, view } = context.editor;
+        const basePos = getBasePos(context.storage.mode, state.selection);
+        if (state.doc.content.size === 0) {
+          if (context.storage.mode === "normal") {
+            return setNormalSelectionAt(0);
+          }
+          if (context.storage.mode === "visual") {
+            return setVisualSelectionAt(0);
+          }
+          return true;
+        }
+        const start = view.coordsAtPos(basePos);
+        if (!start) {
+          if (context.storage.mode === "normal") {
+            return setNormalSelectionAt(
+              clampToTextblock(state, basePos, basePos)
+            );
+          }
+          if (context.storage.mode === "visual") {
+            return setVisualSelectionAt(
+              clampToTextblock(state, basePos, basePos)
+            );
+          }
+          return true;
+        }
+        const lineHeight = parseInt(getComputedStyle(view.dom).lineHeight) || 20;
+        let targetPos: number | null = null;
+        for (let step = 1; step <= 6; step += 1) {
+          const target = view.posAtCoords({
+            left: start.left,
+            top: start.top + dir * lineHeight * step,
+          });
+          if (target && target.pos !== basePos) {
+            targetPos = target.pos;
+            break;
+          }
+        }
+        if (targetPos == null) {
+          if (context.storage.mode === "normal") {
+            return setNormalSelectionAt(
+              clampToTextblock(state, basePos, basePos)
+            );
+          }
+          if (context.storage.mode === "visual") {
+            return setVisualSelectionAt(
+              clampToTextblock(state, basePos, basePos)
+            );
+          }
+          return true;
+        }
+        targetPos = clampToTextblock(state, targetPos, targetPos);
+        if (context.storage.mode === "normal") {
+          return setNormalSelectionAt(targetPos);
+        }
+        if (context.storage.mode === "visual") {
+          return setVisualSelectionAt(targetPos);
+        }
+        return true;
+      };
+    };
+
+    const deleteCurrentLine = () => {
+      const { state, view } = context.editor;
+      const { $head } = state.selection;
+      const start = $head.start($head.depth);
+      const end = $head.end($head.depth);
+      view.dispatch(state.tr.delete(start, end).scrollIntoView());
+      context.storage.mode = "normal";
+      return true;
+    };
+
+    const yankCurrentLine = () => {
+      const { state } = context.editor;
+      const { $head } = state.selection;
+      const start = $head.start($head.depth);
+      const end = $head.end($head.depth);
+      context.storage.yankSlice = state.doc.slice(start, end);
+      return true;
+    };
+
+    const pasteAfter = () => {
+      const { state, view } = context.editor;
+      if (!context.storage.yankSlice) {
+        return true;
+      }
+      const pos = state.selection.$head.pos;
+      view.dispatch(
+        state.tr.replaceRange(pos, pos, context.storage.yankSlice).scrollIntoView()
+      );
+      if (context.storage.mode === "normal") {
+        return setNormalSelectionAt(pos);
+      }
+      return true;
+    };
+
+    const handlePendingOp = (key: "d" | "y", action: () => boolean) => {
+      if (context.storage.mode !== "normal") {
+        return false;
+      }
+      const now = Date.now();
+      if (
+        context.storage.pendingOp &&
+        context.storage.pendingOp.key === key &&
+        context.storage.pendingOp.expires > now
+      ) {
+        context.storage.pendingOp = null;
+        return action();
+      }
+      context.storage.pendingOp = { key, expires: now + 500 };
+      return true;
+    };
+
+    const handlePendingFindKey = (key: string) => {
+      const pending = context.storage.pendingFind;
+      if (!pending) {
+        return null;
+      }
+      if (pending.expires < Date.now()) {
+        context.storage.pendingFind = null;
+        return null;
+      }
+      if (key.length !== 1) {
+        return null;
+      }
+      context.storage.pendingFind = null;
+      return findCharInBlock(pending.dir, key, pending.type);
+    };
+
+    const handlePendingMotion = (key: "g", action: () => boolean) => {
+      if (context.storage.mode !== "normal") {
+        return false;
+      }
+      const now = Date.now();
+      if (
+        context.storage.pendingMotion &&
+        context.storage.pendingMotion.key === key &&
+        context.storage.pendingMotion.expires > now
+      ) {
+        context.storage.pendingMotion = null;
+        return action();
+      }
+      context.storage.pendingMotion = { key, expires: now + 500 };
+      return true;
+    };
+
+    const isWordChar = (value: string) => /[A-Za-z0-9_]/.test(value);
+
+    const findCharInBlock = (
+      dir: 1 | -1,
+      char: string,
+      type: "f" | "t",
+      options: { updateLastFind?: boolean } = {}
+    ) => {
+      const { state } = context.editor;
+      const basePos = getBasePos(context.storage.mode, state.selection);
+      const { $head } = state.selection;
+      const start = $head.start($head.depth);
+      const end = $head.end($head.depth);
+      const text = state.doc.textBetween(start, end, "\n", "\n");
+      const offset = Math.max(0, basePos - start);
+      const searchFrom =
+        dir === 1
+          ? offset + 1
+          : Math.max(0, offset - (context.storage.mode === "visual" ? 2 : 1));
+      const nextIndex =
+        dir === 1
+          ? text.indexOf(char, searchFrom)
+          : text.lastIndexOf(char, searchFrom);
+
+      if (nextIndex === -1) {
+        return true;
+      }
+
+      let targetPos = start + nextIndex;
+      if (type === "t") {
+        targetPos += dir === 1 ? -1 : 1;
+      }
+      if (context.storage.mode === "visual") {
+        targetPos = clampPos(state.doc.content.size, targetPos + 1);
+      }
+      if (options.updateLastFind !== false) {
+        context.storage.lastFind = { dir, char, type };
+      }
+      if (context.storage.mode === "visual") {
+        return setVisualSelectionAt(targetPos);
+      }
+      return setNormalSelectionAt(targetPos);
+    };
+
+    const moveWordStartNext = () => {
+      const { state } = context.editor;
+      const basePos = getBasePos(context.storage.mode, state.selection);
+      const { $head } = state.selection;
+      const start = $head.start($head.depth);
+      const end = $head.end($head.depth);
+      const text = state.doc.textBetween(start, end, "\n", "\n");
+      const offset = Math.max(0, basePos - start);
+
+      for (let i = offset + 1; i < text.length; i += 1) {
+        if (isWordChar(text[i]) && !isWordChar(text[i - 1] || " ")) {
+          const targetPos = start + i;
+          return context.storage.mode === "visual"
+            ? setVisualSelectionAt(targetPos)
+            : setNormalSelectionAt(targetPos);
+        }
+      }
+      return true;
+    };
+
+    const moveWordEndNext = () => {
+      const { state } = context.editor;
+      const basePos = getBasePos(context.storage.mode, state.selection);
+      const { $head } = state.selection;
+      const start = $head.start($head.depth);
+      const end = $head.end($head.depth);
+      const text = state.doc.textBetween(start, end, "\n", "\n");
+      const offset = Math.max(0, basePos - start);
+
+      let inWord = false;
+      for (let i = offset; i < text.length; i += 1) {
+        const char = text[i];
+        if (isWordChar(char)) {
+          inWord = true;
+        } else if (inWord) {
+          const targetPos = start + Math.max(0, i - 1);
+          return context.storage.mode === "visual"
+            ? setVisualSelectionAt(targetPos)
+            : setNormalSelectionAt(targetPos);
+        }
+      }
+
+      if (inWord) {
+        const targetPos = start + Math.max(0, text.length - 1);
+        return context.storage.mode === "visual"
+          ? setVisualSelectionAt(targetPos)
+          : setNormalSelectionAt(targetPos);
+      }
+
+      return true;
+    };
+
+    const moveWordStartPrev = () => {
+      const { state } = context.editor;
+      const basePos = getBasePos(context.storage.mode, state.selection);
+      const { $head } = state.selection;
+      const start = $head.start($head.depth);
+      const end = $head.end($head.depth);
+      const text = state.doc.textBetween(start, end, "\n", "\n");
+      const offset = Math.max(0, basePos - start);
+
+      for (let i = Math.min(offset - 1, text.length - 1); i >= 0; i -= 1) {
+        if (
+          isWordChar(text[i]) &&
+          !isWordChar(text[i - 1] || " ")
+        ) {
+          const targetPos = start + i;
+          return context.storage.mode === "visual"
+            ? setVisualSelectionAt(targetPos)
+            : setNormalSelectionAt(targetPos);
+        }
+      }
+      return true;
+    };
+
+    const getWordMotionTarget = (motion: "w" | "e" | "b") => {
+      const { state } = context.editor;
+      const basePos = getBasePos(context.storage.mode, state.selection);
+      const { $head } = state.selection;
+      const start = $head.start($head.depth);
+      const end = $head.end($head.depth);
+      const text = state.doc.textBetween(start, end, "\n", "\n");
+      if (!text.length) {
+        return null;
+      }
+      const offset = Math.max(0, Math.min(text.length - 1, basePos - start));
+
+      const findNextWordStart = () => {
+        for (let i = offset + 1; i < text.length; i += 1) {
+          if (isWordChar(text[i]) && !isWordChar(text[i - 1] || " ")) {
+            return i;
+          }
+        }
+        return text.length - 1;
+      };
+
+      const findPrevWordStart = () => {
+        for (let i = Math.min(offset - 1, text.length - 1); i >= 0; i -= 1) {
+          if (isWordChar(text[i]) && !isWordChar(text[i - 1] || " ")) {
+            return i;
+          }
+        }
+        return 0;
+      };
+
+      const findWordEnd = () => {
+        let index = offset;
+        if (!isWordChar(text[index])) {
+          let found = -1;
+          for (let i = index + 1; i < text.length; i += 1) {
+            if (isWordChar(text[i])) {
+              found = i;
+              break;
+            }
+          }
+          if (found === -1) {
+            return text.length - 1;
+          }
+          index = found;
+        }
+        for (let i = index; i < text.length; i += 1) {
+          if (!isWordChar(text[i])) {
+            return Math.max(0, i - 1);
+          }
+        }
+        return Math.max(0, text.length - 1);
+      };
+
+      const targetIndex =
+        motion === "w"
+          ? findNextWordStart()
+          : motion === "e"
+            ? findWordEnd()
+            : findPrevWordStart();
+
+      return start + targetIndex;
+    };
+
+    const getInnerWordRange = () => {
+      const { state } = context.editor;
+      const basePos = getBasePos(context.storage.mode, state.selection);
+      const { $head } = state.selection;
+      const start = $head.start($head.depth);
+      const end = $head.end($head.depth);
+      const text = state.doc.textBetween(start, end, "\n", "\n");
+      const maxIndex = text.length - 1;
+      if (maxIndex < 0) {
+        return null;
+      }
+
+      let index = Math.max(0, Math.min(maxIndex, basePos - start));
+      if (!isWordChar(text[index])) {
+        let found = -1;
+        for (let i = index + 1; i < text.length; i += 1) {
+          if (isWordChar(text[i])) {
+            found = i;
+            break;
+          }
+        }
+        if (found === -1) {
+          return null;
+        }
+        index = found;
+      }
+
+      let wordStart = index;
+      while (wordStart > 0 && isWordChar(text[wordStart - 1])) {
+        wordStart -= 1;
+      }
+      let wordEnd = index + 1;
+      while (wordEnd < text.length && isWordChar(text[wordEnd])) {
+        wordEnd += 1;
+      }
+
+      return { from: start + wordStart, to: start + wordEnd };
+    };
+
+    const handlePendingWordKey = (key: string) => {
+      const pending = context.storage.pendingWordOp;
+      if (!pending) {
+        return null;
+      }
+      if (pending.expires < Date.now()) {
+        context.storage.pendingWordOp = null;
+        return null;
+      }
+      if (pending.step === "i") {
+        if (key === "i") {
+          context.storage.pendingWordOp = {
+            op: pending.op,
+            step: "w",
+            expires: Date.now() + 800,
+          };
+          return true;
+        }
+        context.storage.pendingWordOp = null;
+        return null;
+      }
+      if (pending.step === "w") {
+        if (key !== "w") {
+          context.storage.pendingWordOp = null;
+          return null;
+        }
+        context.storage.pendingWordOp = null;
+        const range = getInnerWordRange();
+        if (!range) {
+          return true;
+        }
+        if (pending.op === "v") {
+          context.storage.mode = "visual";
+          context.storage.visualAnchor = range.from;
+          const { state, view } = context.editor;
+          view.dispatch(
+            state.tr.setSelection(
+              TextSelection.create(state.doc, range.from, range.to)
+            )
+          );
+          return true;
+        }
+        const { state, view } = context.editor;
+        const tr = state.tr.delete(range.from, range.to);
+        view.dispatch(tr.scrollIntoView());
+        if (pending.op === "c") {
+          return enterInsertAt(range.from);
+        }
+        return setNormalSelectionAt(range.from);
+      }
+      return null;
+    };
+
+    // Pending op/motion handlers emulate multi-key Vim commands like dw/ye.
+    const applyOpMotion = (op: "c" | "d" | "y", motion: "w" | "e" | "b") => {
+      const { state, view } = context.editor;
+      const basePos = getBasePos(context.storage.mode, state.selection);
+      const targetPos = getWordMotionTarget(motion);
+      if (targetPos == null) {
+        return true;
+      }
+
+      let from = basePos;
+      let to = targetPos;
+      if (motion === "b") {
+        from = targetPos;
+        to = basePos + 1;
+      } else if (motion === "e") {
+        to = targetPos + 1;
+      }
+
+      const clampedFrom = clampPos(state.doc.content.size, from);
+      const clampedTo = clampPos(state.doc.content.size, to);
+      const rangeFrom = Math.min(clampedFrom, clampedTo);
+      const rangeTo = Math.max(clampedFrom, clampedTo);
+
+      if (op === "y") {
+        context.storage.yankSlice = state.doc.slice(rangeFrom, rangeTo);
+        return setNormalSelectionAt(rangeFrom);
+      }
+
+      const tr = state.tr.delete(rangeFrom, rangeTo);
+      view.dispatch(tr.scrollIntoView());
+      if (op === "c") {
+        return enterInsertAt(rangeFrom);
+      }
+      return setNormalSelectionAt(rangeFrom);
+    };
+
+    const handlePendingOpMotionKey = (key: string) => {
+      const pending = context.storage.pendingOpMotion;
+      if (!pending) {
+        return null;
+      }
+      if (pending.expires < Date.now()) {
+        context.storage.pendingOpMotion = null;
+        return null;
+      }
+      if (key === "w" || key === "e" || key === "b") {
+        context.storage.pendingOpMotion = null;
+        context.storage.pendingWordOp = null;
+        return applyOpMotion(pending.op, key);
+      }
+      context.storage.pendingOpMotion = null;
+      return null;
+    };
+
+    const yankSelection = () => {
+      const { state, view } = context.editor;
+      if (state.selection.empty) {
+        return true;
+      }
+      context.storage.yankSlice = state.selection.content();
+      context.storage.mode = "normal";
+      context.storage.visualAnchor = null;
+      const pos = state.selection.from;
+      const { from, to } = getNormalRange(state.doc, pos);
+      view.dispatch(
+        state.tr.setSelection(TextSelection.create(state.doc, from, to))
+      );
+      return true;
+    };
+
+    const syncCommandUI = () => {
+      updateCommandAttributes(
+        context.editor.view.dom as HTMLElement,
+        context.storage
+      );
+    };
+
+    const exitCommandMode = () => {
+      context.storage.commandActive = false;
+      context.storage.commandBuffer = "";
+      syncCommandUI();
+      return true;
+    };
+
+    const replaceSelection = () => {
+      const { state, view } = context.editor;
+      const { from, to, empty } = state.selection;
+      const marks = empty
+        ? state.storedMarks ?? state.selection.$from.marks()
+        : state.doc.resolve(from).marks();
+      if (!empty) {
+        const tr = state.tr
+          .delete(from, to)
+          .setSelection(TextSelection.create(state.tr.doc, from))
+          .setStoredMarks(marks);
+        view.dispatch(tr);
+      }
+      context.storage.mode = "insert";
+      context.storage.visualAnchor = null;
+      if (empty) {
+        view.dispatch(
+          state.tr
+            .setSelection(TextSelection.create(state.doc, from))
+            .setStoredMarks(marks)
+        );
+      }
+      return true;
+    };
+
+    const executeCommand = () =>
+      executeVimCommand({
+        editor: context.editor,
+        storage: context.storage,
+        onQuit: context.options.onQuit,
+        exitCommandMode,
+        replaceSelection,
+      });
+
+    const enterCommandMode = () => {
+      if (context.storage.mode === "insert") {
+        return false;
+      }
+      context.storage.commandActive = true;
+      context.storage.commandBuffer = "";
+      syncCommandUI();
+      return true;
+    };
+
+    const getSearchMatches = (state: Selection["$from"]["doc"], query: string) => {
+      const matches: Array<{ from: number; to: number }> = [];
+      if (!query) {
+        return matches;
+      }
+      state.descendants((node, pos) => {
+        if (!node.isText) {
+          return;
+        }
+        const text = node.text || "";
+        let index = text.indexOf(query);
+        while (index !== -1) {
+          matches.push({ from: pos + index, to: pos + index + query.length });
+          index = text.indexOf(query, index + query.length);
+        }
+      });
+      return matches;
+    };
+
+    const jumpSearch = (dir: 1 | -1) => {
+      if (context.storage.mode === "insert") {
+        return false;
+      }
+      const query = context.storage.searchQuery;
+      if (!query) {
+        return true;
+      }
+      const { state } = context.editor;
+      const matches = getSearchMatches(state.doc, query);
+      if (!matches.length) {
+        return true;
+      }
+      const basePos = getBasePos(context.storage.mode, state.selection);
+      let target = matches[0];
+      if (dir === 1) {
+        target = matches.find((match) => match.from > basePos) || matches[0];
+      } else {
+        for (let i = matches.length - 1; i >= 0; i -= 1) {
+          if (matches[i].from < basePos) {
+            target = matches[i];
+            break;
+          }
+        }
+      }
+      if (context.storage.mode === "visual") {
+        return setVisualSelectionAt(target.from);
+      }
+      return setNormalSelectionAt(target.from);
+    };
+
+    const withFind = (key: string, handler: () => boolean) => {
+      return () => {
+        if (!context.storage.enabled) {
+          return false;
+        }
+        if (context.storage.commandActive) {
+          if (key.length === 1 && printableChars.includes(key)) {
+            context.storage.commandBuffer += key;
+            syncCommandUI();
+          }
+          return true;
+        }
+        if (context.storage.mode === "insert" && key.length === 1) {
+          return false;
+        }
+        const pendingOpMotion = handlePendingOpMotionKey(key);
+        if (pendingOpMotion !== null) {
+          return pendingOpMotion;
+        }
+        const pendingWord = handlePendingWordKey(key);
+        if (pendingWord !== null) {
+          return pendingWord;
+        }
+        const pending = handlePendingFindKey(key);
+        if (pending !== null) {
+          return pending;
+        }
+        return handler();
+      };
+    };
+
+    const withEnabled = (handler: () => boolean) => {
+      return () => {
+        if (!context.storage.enabled) {
+          return false;
+        }
+        if (context.storage.commandActive) {
+          return false;
+        }
+        return handler();
+      };
+    };
+
+    const repeatLastFind = () => {
+      if (!context.storage.lastFind || context.storage.mode === "insert") {
+        return false;
+      }
+      return findCharInBlock(
+        context.storage.lastFind.dir,
+        context.storage.lastFind.char,
+        context.storage.lastFind.type,
+        { updateLastFind: false }
+      );
+    };
+
+    const repeatLastFindReverse = () => {
+      if (!context.storage.lastFind || context.storage.mode === "insert") {
+        return false;
+      }
+      return findCharInBlock(
+        (context.storage.lastFind.dir * -1) as 1 | -1,
+        context.storage.lastFind.char,
+        context.storage.lastFind.type,
+        { updateLastFind: false }
+      );
+    };
+
+    const shortcuts: Record<string, (props?: unknown) => boolean> = {
+      Escape: () => {
+        if (context.storage.commandActive) {
+          return exitCommandMode();
+        }
+        context.editor.commands.enterNormalMode();
+        return true;
+      },
+      Enter: () => {
+        if (!context.storage.enabled || !context.storage.commandActive) {
+          return false;
+        }
+        return executeCommand();
+      },
+      Backspace: () => {
+        if (!context.storage.enabled || !context.storage.commandActive) {
+          return false;
+        }
+        context.storage.commandBuffer = context.storage.commandBuffer.slice(0, -1);
+        syncCommandUI();
+        return true;
+      },
+      ":": () => {
+        if (!context.storage.enabled) {
+          return false;
+        }
+        if (context.storage.commandActive) {
+          return false;
+        }
+        return enterCommandMode();
+      },
+      "Mod-c": withEnabled(() => {
+        context.editor.commands.enterNormalMode();
+        return true;
+      }),
+      i: withFind("i", () => {
+        if (context.storage.mode === "visual") {
+          context.storage.pendingWordOp = {
+            op: "v",
+            step: "w",
+            expires: Date.now() + 800,
+          };
+          return true;
+        }
+        if (context.storage.mode !== "normal") {
+          return false;
+        }
+        const { state } = context.editor;
+        return enterInsertAt(getBasePos(context.storage.mode, state.selection));
+      }),
+      a: withFind("a", () => {
+        if (context.storage.mode !== "normal") {
+          return false;
+        }
+        const { state } = context.editor;
+        return enterInsertAt(
+          clampPos(
+            state.doc.content.size,
+            state.selection.from + (state.selection.empty ? 0 : 1)
+          )
+        );
+      }),
+      I: withFind("I", () => {
+        if (context.storage.mode !== "normal") {
+          return false;
+        }
+        const { state } = context.editor;
+        const { $head } = state.selection;
+        return enterInsertAt($head.start($head.depth));
+      }),
+      A: withFind("A", () => {
+        if (context.storage.mode !== "normal") {
+          return false;
+        }
+        const { state } = context.editor;
+        const { $head } = state.selection;
+        return enterInsertAt($head.end($head.depth));
+      }),
+      o: withFind("o", () => {
+        if (context.storage.mode !== "normal") {
+          return false;
+        }
+        const { state, view } = context.editor;
+        const { $head } = state.selection;
+        const insertPos = $head.end($head.depth);
+        context.storage.mode = "insert";
+        context.storage.visualAnchor = null;
+        let tr = state.tr.setSelection(
+          TextSelection.create(state.doc, insertPos)
+        );
+        if (canSplit(state.doc, insertPos)) {
+          tr = tr.split(insertPos);
+          const mappedPos = tr.mapping.map(insertPos + 1);
+          tr = tr.setSelection(TextSelection.create(tr.doc, mappedPos));
+        }
+        view.dispatch(tr.scrollIntoView());
+        return true;
+      }),
+      v: () => {
+        if (!context.storage.enabled || context.storage.commandActive) {
+          return false;
+        }
+        if (context.storage.mode === "insert") {
+          return false;
+        }
+        if (context.storage.mode !== "visual") {
+          context.editor.commands.enterVisualMode();
+          context.storage.pendingWordOp = {
+            op: "v",
+            step: "i",
+            expires: Date.now() + 800,
+          };
+          return true;
+        }
+        context.editor.commands.enterNormalMode();
+        return true;
+      },
+      V: withFind("V", () => {
+        if (context.storage.mode !== "visual") {
+          const { state, view } = context.editor;
+          const { $head } = state.selection;
+          const start = $head.start($head.depth);
+          const end = $head.end($head.depth);
+          context.storage.mode = "visual";
+          context.storage.visualAnchor = start;
+          view.dispatch(
+            state.tr.setSelection(TextSelection.create(state.doc, start, end))
+          );
+          return true;
+        }
+        context.editor.commands.enterNormalMode();
+        return true;
+      }),
+      h: withFind("h", () =>
+        context.storage.mode === "insert" ? false : moveBy(-1)()
+      ),
+      l: withFind("l", () =>
+        context.storage.mode === "insert" ? false : moveBy(1)()
+      ),
+      j: withFind("j", () =>
+        context.storage.mode === "insert" ? false : moveLine(1)()
+      ),
+      k: withFind("k", () =>
+        context.storage.mode === "insert" ? false : moveLine(-1)()
+      ),
+      c: withFind("c", () => {
+        if (context.storage.mode !== "normal") {
+          return false;
+        }
+        context.storage.pendingOpMotion = {
+          op: "c",
+          expires: Date.now() + 800,
+        };
+        context.storage.pendingWordOp = {
+          op: "c",
+          step: "i",
+          expires: Date.now() + 800,
+        };
+        return true;
+      }),
+      d: withFind("d", () => {
+        if (context.storage.mode === "visual") {
+          const { state, view } = context.editor;
+          view.dispatch(state.tr.deleteSelection().scrollIntoView());
+          context.editor.commands.enterNormalMode();
+          return true;
+        }
+        if (context.storage.mode !== "normal") {
+          return false;
+        }
+        context.storage.pendingOpMotion = {
+          op: "d",
+          expires: Date.now() + 800,
+        };
+        context.storage.pendingWordOp = {
+          op: "d",
+          step: "i",
+          expires: Date.now() + 800,
+        };
+        return handlePendingOp("d", deleteCurrentLine);
+      }),
+      y: withFind("y", () => {
+        if (context.storage.mode === "visual") {
+          return yankSelection();
+        }
+        if (context.storage.mode === "normal") {
+          context.storage.pendingOpMotion = {
+            op: "y",
+            expires: Date.now() + 800,
+          };
+        }
+        return handlePendingOp("y", yankCurrentLine);
+      }),
+      p: withFind("p", () =>
+        context.storage.mode === "insert" ? false : pasteAfter()
+      ),
+      f: withFind("f", () => {
+        if (context.storage.mode === "insert") {
+          return false;
+        }
+        context.storage.pendingFind = { dir: 1, expires: Date.now() + 1500, type: "f" };
+        return true;
+      }),
+      F: withFind("F", () => {
+        if (context.storage.mode === "insert") {
+          return false;
+        }
+        context.storage.pendingFind = { dir: -1, expires: Date.now() + 1500, type: "f" };
+        return true;
+      }),
+      t: withFind("t", () => {
+        if (context.storage.mode === "insert") {
+          return false;
+        }
+        context.storage.pendingFind = { dir: 1, expires: Date.now() + 1500, type: "t" };
+        return true;
+      }),
+      T: withFind("T", () => {
+        if (context.storage.mode === "insert") {
+          return false;
+        }
+        context.storage.pendingFind = { dir: -1, expires: Date.now() + 1500, type: "t" };
+        return true;
+      }),
+      ";": withFind(";", repeatLastFind),
+      ",": withFind(",", repeatLastFindReverse),
+      Semicolon: withFind("Semicolon", repeatLastFind),
+      Comma: withFind("Comma", repeatLastFindReverse),
+      g: withFind("g", () =>
+        handlePendingMotion("g", () => setNormalSelectionAt(0))
+      ),
+      G: withFind("G", () => {
+        if (context.storage.mode !== "normal") {
+          return false;
+        }
+        const { state } = context.editor;
+        return setNormalSelectionAt(state.doc.content.size);
+      }),
+      w: withFind("w", () =>
+        context.storage.mode === "insert" ? false : moveWordStartNext()
+      ),
+      e: withFind("e", () =>
+        context.storage.mode === "insert" ? false : moveWordEndNext()
+      ),
+      b: withFind("b", () =>
+        context.storage.mode === "insert" ? false : moveWordStartPrev()
+      ),
+      u: withFind("u", () => {
+        if (context.storage.mode !== "normal") {
+          return false;
+        }
+        if (context.editor.commands.undo) {
+          context.editor.commands.undo();
+          return true;
+        }
+        return false;
+      }),
+      "Mod-r": withFind("Mod-r", () => {
+        if (context.storage.mode !== "normal") {
+          return false;
+        }
+        if (context.editor.commands.redo) {
+          context.editor.commands.redo();
+          return true;
+        }
+        return false;
+      }),
+      n: withFind("n", () => jumpSearch(1)),
+      N: withFind("N", () => jumpSearch(-1)),
+    };
+
+    for (const char of printableChars) {
+      if (!shortcuts[char]) {
+        shortcuts[char] = withFind(char, () => context.storage.mode !== "insert");
+      }
+    }
+
+  return shortcuts;
+};
