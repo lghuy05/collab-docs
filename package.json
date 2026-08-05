@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:vim-grammar": "tsx --test src/extensions/vim/engine/*.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1100.0",
@@ -101,6 +102,7 @@
     "eslint-config-next": "^16.2.12",
     "postcss": "^8.5.25",
     "tailwindcss": "^3.4.19",
+    "tsx": "^4.23.6",
     "typescript": "^5.9.3"
   }
 }

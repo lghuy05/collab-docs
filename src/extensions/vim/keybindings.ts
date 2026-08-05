@@ -3,6 +3,7 @@ import { Selection, TextSelection } from "@tiptap/pm/state";
 import { canSplit } from "@tiptap/pm/transform";
 
 import { getVimCommandSuggestions } from "./command-registry";
+import { visualFormattingDefinitions } from "./engine/default-definitions";
 import { consumeVimEngineInput } from "./engine/input";
 import type { ParsedVimCommand } from "./engine/grammar";
 import { vimEnginePluginKey } from "./engine/state";
@@ -13,6 +14,7 @@ import {
   clampToTextblock,
   getBasePos,
   getFirstTextblockPos,
+  getNormalCursorPos,
   getNormalRange,
   printableChars,
   updateCommandAttributes,
@@ -213,6 +215,33 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
       const { $head } = state.selection;
       const start = $head.start($head.depth);
       const end = $head.end($head.depth);
+      if (start === end) {
+        const blockStart = $head.before($head.depth);
+        const blockEnd = $head.after($head.depth);
+        let textblockCount = 0;
+        state.doc.descendants((node) => {
+          if (node.isTextblock) {
+            textblockCount += 1;
+          }
+        });
+        // A ProseMirror document must retain one valid text block, but an
+        // empty line between (or beside) other blocks should disappear on dd.
+        if (textblockCount > 1) {
+          const tr = state.tr.delete(blockStart, blockEnd);
+          const cursor = getNormalCursorPos(
+            tr.doc,
+            Math.min(blockStart, tr.doc.content.size)
+          );
+          const range = getNormalRange(tr.doc, cursor);
+          view.dispatch(
+            tr
+              .setSelection(TextSelection.create(tr.doc, range.from, range.to))
+              .scrollIntoView()
+          );
+          context.storage.mode = "normal";
+          return true;
+        }
+      }
       view.dispatch(state.tr.delete(start, end).scrollIntoView());
       context.storage.mode = "normal";
       return true;
@@ -344,24 +373,6 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
       return setNormalSelectionAt(from);
     };
 
-    const handlePendingOp = (key: "d" | "y", action: () => boolean) => {
-      if (context.storage.mode !== "normal") {
-        return false;
-      }
-      const now = Date.now();
-      if (
-        context.storage.pendingOp &&
-        context.storage.pendingOp.key === key &&
-        context.storage.pendingOp.expires > now
-      ) {
-        context.storage.pendingOp = null;
-        context.storage.pendingCount = "";
-        return action();
-      }
-      context.storage.pendingOp = { key, expires: now + 1200 };
-      return true;
-    };
-
     const handlePendingFindKey = (key: string) => {
       const pending = context.storage.pendingFind;
       if (!pending) {
@@ -397,23 +408,6 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
       }
       view.dispatch(state.tr.insertText(key, from, to).scrollIntoView());
       return setNormalSelectionAt(from);
-    };
-
-    const handlePendingMotion = (key: "g", action: () => boolean) => {
-      if (context.storage.mode !== "normal") {
-        return false;
-      }
-      const now = Date.now();
-      if (
-        context.storage.pendingMotion &&
-        context.storage.pendingMotion.key === key &&
-        context.storage.pendingMotion.expires > now
-      ) {
-        context.storage.pendingMotion = null;
-        return action();
-      }
-      context.storage.pendingMotion = { key, expires: now + 1200 };
-      return true;
     };
 
     const isWordChar = (value: string) => /[A-Za-z0-9_]/.test(value);
@@ -645,6 +639,123 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
       return { from: start + wordStart, to: start + wordEnd };
     };
 
+    const getAroundWordRange = () => {
+      const range = getInnerWordRange();
+      if (!range) {
+        return null;
+      }
+      const { state } = context.editor;
+      const blockEnd = state.selection.$head.end(state.selection.$head.depth);
+      let to = range.to;
+      while (to < blockEnd && /\s/u.test(state.doc.textBetween(to, to + 1))) {
+        to += 1;
+      }
+      if (to === range.to) {
+        let from = range.from;
+        const blockStart = state.selection.$head.start(state.selection.$head.depth);
+        while (from > blockStart && /\s/u.test(state.doc.textBetween(from - 1, from))) {
+          from -= 1;
+        }
+        return { from, to };
+      }
+      return { from: range.from, to };
+    };
+
+    const getDelimitedRange = (open: string, close: string, around: boolean) => {
+      const { state } = context.editor;
+      const { $head } = state.selection;
+      const start = $head.start($head.depth);
+      const end = $head.end($head.depth);
+      const text = state.doc.textBetween(start, end, "\n", "\n");
+      const cursor = Math.max(0, Math.min(text.length, getBasePos(context.storage.mode, state.selection) - start));
+      let left = -1;
+      let right = -1;
+
+      if (open === close) {
+        left = text.lastIndexOf(open, Math.max(0, cursor));
+        right = text.indexOf(close, Math.max(cursor + 1, left + 1));
+      } else {
+        let depth = 0;
+        for (let index = Math.min(cursor, text.length - 1); index >= 0; index -= 1) {
+          if (text[index] === close) {
+            depth += 1;
+          } else if (text[index] === open) {
+            if (depth === 0) {
+              left = index;
+              break;
+            }
+            depth -= 1;
+          }
+        }
+        if (left !== -1) {
+          depth = 0;
+          for (let index = left + 1; index < text.length; index += 1) {
+            if (text[index] === open) {
+              depth += 1;
+            } else if (text[index] === close) {
+              if (depth === 0) {
+                right = index;
+                break;
+              }
+              depth -= 1;
+            }
+          }
+        }
+      }
+      if (left === -1 || right === -1 || left >= right) {
+        return null;
+      }
+      return around
+        ? { from: start + left, to: start + right + 1 }
+        : { from: start + left + 1, to: start + right };
+    };
+
+    const getTextObjectRange = (target: string) => {
+      switch (target) {
+        case "iw":
+          return getInnerWordRange();
+        case "aw":
+          return getAroundWordRange();
+        case "i\"":
+          return getDelimitedRange('"', '"', false);
+        case "a\"":
+          return getDelimitedRange('"', '"', true);
+        case "i'":
+          return getDelimitedRange("'", "'", false);
+        case "a'":
+          return getDelimitedRange("'", "'", true);
+        case "i(":
+          return getDelimitedRange("(", ")", false);
+        case "a(":
+          return getDelimitedRange("(", ")", true);
+        case "i[":
+          return getDelimitedRange("[", "]", false);
+        case "a[":
+          return getDelimitedRange("[", "]", true);
+        case "i{":
+          return getDelimitedRange("{", "}", false);
+        case "a{":
+          return getDelimitedRange("{", "}", true);
+        default:
+          return null;
+      }
+    };
+
+    const applyOperatorRange = (operator: "c" | "d" | "y", from: number, to: number) => {
+      const { state, view } = context.editor;
+      const rangeFrom = clampPos(state.doc.content.size, Math.min(from, to));
+      const rangeTo = clampPos(state.doc.content.size, Math.max(from, to));
+      if (rangeFrom === rangeTo) {
+        return true;
+      }
+      if (operator === "y") {
+        context.storage.yankSlice = state.doc.slice(rangeFrom, rangeTo);
+        return setNormalSelectionAt(rangeFrom);
+      }
+      view.dispatch(state.tr.delete(rangeFrom, rangeTo).scrollIntoView());
+      return operator === "c" ? enterInsertAt(rangeFrom) : setNormalSelectionAt(rangeFrom);
+    };
+
     const handlePendingWordKey = (key: string) => {
       const pending = context.storage.pendingWordOp;
       if (!pending) {
@@ -699,10 +810,14 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
     };
 
     // Pending op/motion handlers emulate multi-key Vim commands like dw/ye.
-    const applyOpMotion = (op: "c" | "d" | "y", motion: "w" | "e" | "b") => {
-      const { state, view } = context.editor;
+    const applyOpMotion = (
+      op: "c" | "d" | "y",
+      motion: "w" | "e" | "b",
+      count = takeCount()
+    ) => {
+      const { state } = context.editor;
       const basePos = getBasePos(context.storage.mode, state.selection);
-      const targetPos = getWordMotionTarget(motion, takeCount());
+      const targetPos = getWordMotionTarget(motion, count);
       if (targetPos == null) {
         return true;
       }
@@ -716,40 +831,7 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         to = targetPos + 1;
       }
 
-      const clampedFrom = clampPos(state.doc.content.size, from);
-      const clampedTo = clampPos(state.doc.content.size, to);
-      const rangeFrom = Math.min(clampedFrom, clampedTo);
-      const rangeTo = Math.max(clampedFrom, clampedTo);
-
-      if (op === "y") {
-        context.storage.yankSlice = state.doc.slice(rangeFrom, rangeTo);
-        return setNormalSelectionAt(rangeFrom);
-      }
-
-      const tr = state.tr.delete(rangeFrom, rangeTo);
-      view.dispatch(tr.scrollIntoView());
-      if (op === "c") {
-        return enterInsertAt(rangeFrom);
-      }
-      return setNormalSelectionAt(rangeFrom);
-    };
-
-    const handlePendingOpMotionKey = (key: string) => {
-      const pending = context.storage.pendingOpMotion;
-      if (!pending) {
-        return null;
-      }
-      if (pending.expires < Date.now()) {
-        context.storage.pendingOpMotion = null;
-        return null;
-      }
-      if (key === "w" || key === "e" || key === "b") {
-        context.storage.pendingOpMotion = null;
-        context.storage.pendingWordOp = null;
-        return applyOpMotion(pending.op, key);
-      }
-      context.storage.pendingOpMotion = null;
-      return null;
+      return applyOperatorRange(op, from, to);
     };
 
     /**
@@ -775,6 +857,30 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
           commandActive: context.storage.commandActive,
           state: context.editor.state,
           dispatch: (transaction) => context.editor.view.dispatch(transaction),
+        },
+        key,
+        executeEngineCommand
+      );
+    };
+
+    const consumeVisualFormattingKey = (key: string): boolean | null => {
+      if (
+        !context.storage.enabled ||
+        context.storage.commandActive ||
+        context.storage.mode !== "visual" ||
+        key.length !== 1
+      ) {
+        return null;
+      }
+      return consumeVimEngineInput(
+        {
+          enabled: context.storage.enabled,
+          mode: context.storage.mode,
+          commandActive: context.storage.commandActive,
+          state: context.editor.state,
+          dispatch: (transaction) => context.editor.view.dispatch(transaction),
+          definitions: visualFormattingDefinitions,
+          acceptedModes: ["visual"],
         },
         key,
         executeEngineCommand
@@ -808,35 +914,86 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         return true;
       };
 
-      const applyInnerWord = (operator: "c" | "d" | "y") => {
-        const range = getInnerWordRange();
+      const applyTextObject = (operator: "c" | "d" | "y", target: string) => {
+        const range = getTextObjectRange(target);
         if (!range) {
           return true;
         }
-        const { state, view } = context.editor;
-        if (operator === "y") {
-          context.storage.yankSlice = state.doc.slice(range.from, range.to);
-          return setNormalSelectionAt(range.from);
+        return applyOperatorRange(operator, range.from, range.to);
+      };
+
+      const applyLineMotion = (operator: "c" | "d" | "y", direction: 1 | -1) => {
+        const { state } = context.editor;
+        const currentBlockPos = state.selection.$head.before(state.selection.$head.depth);
+        const blocks: Array<{ from: number; to: number }> = [];
+        state.doc.descendants((node, pos) => {
+          if (node.isTextblock) {
+            blocks.push({ from: pos + 1, to: pos + node.nodeSize - 1 });
+          }
+        });
+        const currentIndex = blocks.findIndex((block) => block.from - 1 === currentBlockPos);
+        if (currentIndex === -1) {
+          return true;
         }
-        view.dispatch(state.tr.delete(range.from, range.to).scrollIntoView());
-        return operator === "c" ? enterInsertAt(range.from) : setNormalSelectionAt(range.from);
+        const targetIndex = Math.max(0, Math.min(blocks.length - 1, currentIndex + direction * command.count));
+        const from = direction < 0 ? blocks[targetIndex].from : blocks[currentIndex].from;
+        const to = direction < 0 ? blocks[currentIndex].to : blocks[targetIndex].to;
+        return applyOperatorRange(operator, from, to);
+      };
+
+      const applyBoundaryMotion = (operator: "c" | "d" | "y", target: string) => {
+        const { state } = context.editor;
+        const base = getBasePos(context.storage.mode, state.selection);
+        const { $head } = state.selection;
+        const start = $head.start($head.depth);
+        const end = $head.end($head.depth);
+        if (target === "h") {
+          return applyOperatorRange(operator, Math.max(start, base - command.count), base + 1);
+        }
+        if (target === "l") {
+          return applyOperatorRange(operator, base, Math.min(end, base + command.count));
+        }
+        if (target === "0") {
+          return applyOperatorRange(operator, start, base + 1);
+        }
+        if (target === "^") {
+          const text = state.doc.textBetween(start, end, "\n", "\n");
+          const firstNonBlank = text.search(/\S/u);
+          return applyOperatorRange(operator, start + Math.max(0, firstNonBlank), base + 1);
+        }
+        if (target === "$") {
+          return applyOperatorRange(operator, base, end);
+        }
+        if (target === "gg") {
+          return applyOperatorRange(operator, getFirstTextblockPos(state.doc), base + 1);
+        }
+        if (target === "G") {
+          return applyOperatorRange(operator, base, state.doc.content.size);
+        }
+        return true;
       };
 
       if (command.operator && command.target) {
         const operator = command.operator as "c" | "d" | "y";
         if (command.target === "d") {
-          return repeat(operator === "y" ? yankCurrentLine : deleteCurrentLine);
+          return operator === "d" ? repeat(deleteCurrentLine) : true;
+        }
+        if (command.target === "c") {
+          return operator === "c" ? repeat(substituteLine) : true;
         }
         if (command.target === "y") {
           return operator === "y" ? repeat(yankCurrentLine) : true;
         }
-        if (command.target === "iw") {
-          return applyInnerWord(operator);
+        if (command.target.startsWith("i") || command.target.startsWith("a")) {
+          return applyTextObject(operator, command.target);
         }
         if (command.target === "w" || command.target === "e" || command.target === "b") {
-          return applyOpMotion(operator, command.target);
+          return applyOpMotion(operator, command.target, command.count);
         }
-        return true;
+        if (command.target === "j" || command.target === "k") {
+          return applyLineMotion(operator, command.target === "j" ? 1 : -1);
+        }
+        return applyBoundaryMotion(operator, command.target);
       }
 
       if (command.action) {
@@ -863,6 +1020,24 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
             return pasteBefore();
           case "u":
             return context.editor.commands.undo?.() ?? false;
+          case "gb":
+            return context.editor.chain().focus().toggleBold().run();
+          case "gi":
+            return context.editor.chain().focus().toggleItalic().run();
+          case "gu":
+            return context.editor.chain().focus().toggleUnderline().run();
+          case "gp":
+            return context.editor.chain().focus().setParagraph().run();
+          case "gc":
+            return context.editor.chain().focus().addPendingComment().run();
+          case "g1":
+          case "g2":
+          case "g3":
+          case "g4":
+          case "g5":
+            return context.editor.chain().focus().toggleHeading({
+              level: Number(command.action[1]) as 1 | 2 | 3 | 4 | 5,
+            }).run();
         }
       }
 
@@ -1059,13 +1234,13 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         if (context.storage.mode === "insert" && key.length === 1) {
           return false;
         }
+        const visualFormatResult = consumeVisualFormattingKey(key);
+        if (visualFormatResult !== null) {
+          return visualFormatResult;
+        }
         const engineResult = consumeEngineKey(key);
         if (engineResult !== null) {
           return engineResult;
-        }
-        const pendingOpMotion = handlePendingOpMotionKey(key);
-        if (pendingOpMotion !== null) {
-          return pendingOpMotion;
         }
         const pendingWord = handlePendingWordKey(key);
         if (pendingWord !== null) {
@@ -1337,19 +1512,8 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         context.storage.mode === "insert" ? false : repeatMotion(moveLine(-1))
       ),
       c: withFind("c", () => {
-        if (context.storage.mode !== "normal") {
-          return false;
-        }
-        context.storage.pendingOpMotion = {
-          op: "c",
-          expires: Date.now() + 800,
-        };
-        context.storage.pendingWordOp = {
-          op: "c",
-          step: "i",
-          expires: Date.now() + 800,
-        };
-        return true;
+        // Normal-mode operators are consumed by the ProseMirror engine.
+        return context.storage.mode === "normal";
       }),
       d: withFind("d", () => {
         if (context.storage.mode === "visual") {
@@ -1361,28 +1525,13 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         if (context.storage.mode !== "normal") {
           return false;
         }
-        context.storage.pendingOpMotion = {
-          op: "d",
-          expires: Date.now() + 800,
-        };
-        context.storage.pendingWordOp = {
-          op: "d",
-          step: "i",
-          expires: Date.now() + 800,
-        };
-        return handlePendingOp("d", deleteCurrentLine);
+        return true;
       }),
       y: withFind("y", () => {
         if (context.storage.mode === "visual") {
           return yankSelection();
         }
-        if (context.storage.mode === "normal") {
-          context.storage.pendingOpMotion = {
-            op: "y",
-            expires: Date.now() + 800,
-          };
-        }
-        return handlePendingOp("y", yankCurrentLine);
+        return context.storage.mode === "normal";
       }),
       p: withFind("p", () =>
         context.storage.mode === "insert" ? false : pasteAfter()
@@ -1455,11 +1604,7 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
       ",": withFind(",", repeatLastFindReverse),
       Semicolon: withFind("Semicolon", repeatLastFind),
       Comma: withFind("Comma", repeatLastFindReverse),
-      g: withFind("g", () =>
-        handlePendingMotion("g", () =>
-          setNormalSelectionAt(getFirstTextblockPos(context.editor.state.doc))
-        )
-      ),
+      g: withFind("g", () => context.storage.mode === "normal"),
       G: withFind("G", () => {
         if (context.storage.mode === "insert") {
           return false;

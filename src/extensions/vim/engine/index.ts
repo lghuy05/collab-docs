@@ -1,5 +1,5 @@
 /** Public, ProseMirror-level Vim engine API. */
-export { defaultVimDefinitions } from "./default-definitions";
+export { defaultVimDefinitions, visualFormattingDefinitions } from "./default-definitions";
 export { consumeVimEngineInput, type VimEngineInput } from "./input";
 export {
   parseVimTokens,
