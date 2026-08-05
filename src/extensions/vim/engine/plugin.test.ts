@@ -36,5 +36,39 @@ test("maps a Visual anchor through a document transaction", () => {
     mode: "visual",
     pendingTokens: [],
     visualAnchor: 4,
+    pendingRegister: false,
+    activeRegister: null,
+    registers: {},
+    lastChange: null,
+    recordingChange: false,
+    pendingMacroRegister: false,
+    pendingMacroPlayback: false,
+    pendingMacroCount: 1,
+    recordingMacro: null,
+    lastMacroRegister: null,
+    macros: {},
   });
+});
+
+test("captures inserted text from the actual ProseMirror transaction while recording", () => {
+  let state = EditorState.create({
+    schema,
+    doc: schema.node("doc", undefined, [
+      schema.node("paragraph", undefined, schema.text("hello")),
+    ]),
+    plugins: [createVimEnginePlugin()],
+  });
+
+  state = state.apply(
+    state.tr.setMeta(vimEnginePluginKey, {
+      mode: "insert",
+      recordingMacro: "a",
+      macros: { a: [] },
+    })
+  );
+  state = state.apply(state.tr.insertText(".", 6));
+
+  assert.deepEqual(vimEnginePluginKey.getState(state)?.macros.a, [
+    { type: "insertText", text: "." },
+  ]);
 });

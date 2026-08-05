@@ -14,6 +14,16 @@ export interface ParsedVimCommand {
   action?: string;
 }
 
+export type VimOperation =
+  | { type: "command"; command: ParsedVimCommand }
+  | { type: "key"; key: string }
+  | { type: "insertText"; text: string }
+  | { type: "deleteBackward" }
+  | { type: "deleteForward" }
+  | { type: "splitBlock" }
+  | { type: "exCommand"; command: string }
+  | { type: "enterNormalMode" };
+
 export type VimParseResult =
   | { status: "pending" }
   | { status: "invalid" }

@@ -7,8 +7,30 @@ export {
   type VimCommandDefinition,
   type VimCommandKind,
   type VimParseResult,
+  type VimOperation,
 } from "./grammar";
 export { createVimEnginePlugin } from "./plugin";
+export {
+  beginMacroRecording,
+  consumeMacroPlayback,
+  isRepeatableChange,
+  recordCommand,
+  recordEditOperation,
+  recordExCommand,
+  recordInsertText,
+  recordKey,
+  recordNormalMode,
+  requestMacroPlayback,
+  stopMacroRecording,
+} from "./recording";
+export {
+  clearActiveRegister,
+  isValidMacroRegisterName,
+  isValidRegisterName,
+  readRegister,
+  selectRegister,
+  writeRegister,
+} from "./registers";
 export { createVimRegistry, resolveVimTokens, type VimRegistry } from "./registry";
 export {
   initialVimEngineState,
