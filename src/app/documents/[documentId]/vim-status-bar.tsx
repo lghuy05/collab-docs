@@ -5,6 +5,7 @@ import { useOthers, useStatus, useSyncStatus } from "@liveblocks/react";
 import { useCallback, useEffect, useState } from "react";
 import { useEditorStore } from "@/store/use-editor-store";
 import { getVimCommandSuggestions } from "@/extensions/vim/command-registry";
+import { vimEnginePluginKey } from "@/extensions/vim/engine";
 
 type VimStatus = {
   command: string;
@@ -15,11 +16,13 @@ type VimStatus = {
   commandSelectionIndex: number | null;
   enabled: boolean;
   mode: "normal" | "insert" | "visual";
+  recordingMacro: string | null;
   words: number;
 };
 
 const readEditorStatus = (editor: Editor): VimStatus => {
   const vim = editor.storage.vimMode;
+  const engine = vimEnginePluginKey.getState(editor.state);
   const text = editor.getText().trim();
 
   return {
@@ -31,6 +34,7 @@ const readEditorStatus = (editor: Editor): VimStatus => {
     commandSelectionIndex: vim.commandSelectionIndex,
     enabled: vim.enabled,
     mode: vim.mode,
+    recordingMacro: engine?.recordingMacro ?? null,
     words: text ? text.split(/\s+/u).length : 0,
   };
 };
@@ -116,7 +120,7 @@ const VimStatusBarContent = ({ editor }: { editor: Editor }) => {
           -- {editorStatus.mode.toUpperCase()} --
         </span>
         <span className="min-w-0 flex-1 truncate px-2 text-slate-100">
-          {editorStatus.command || "--"}
+          {editorStatus.command || (editorStatus.recordingMacro ? `recording @${editorStatus.recordingMacro}` : "--")}
         </span>
         {editorStatus.searchMatchIndex != null && (
           <span className="shrink-0 text-slate-400">

@@ -1,11 +1,32 @@
 import type { Editor } from "@tiptap/core";
-import { Selection, TextSelection } from "@tiptap/pm/state";
+import { Selection, TextSelection, Transaction } from "@tiptap/pm/state";
 import { canSplit } from "@tiptap/pm/transform";
 
 import { getVimCommandSuggestions } from "./command-registry";
 import { visualFormattingDefinitions } from "./engine/default-definitions";
 import { consumeVimEngineInput } from "./engine/input";
-import type { ParsedVimCommand } from "./engine/grammar";
+import type { ParsedVimCommand, VimOperation } from "./engine/grammar";
+import {
+  clearActiveRegister,
+  isValidMacroRegisterName,
+  isValidRegisterName,
+  readRegister,
+  selectRegister,
+  writeRegister,
+} from "./engine/registers";
+import {
+  beginMacroRecording,
+  consumeMacroPlayback,
+  isRepeatableChange,
+  recordCommand,
+  recordEditOperation,
+  recordExCommand,
+  recordKey,
+  recordNormalMode,
+  requestMacroPlayback,
+  stopMacroRecording,
+  vimMacroReplayMeta,
+} from "./engine/recording";
 import { vimEnginePluginKey } from "./engine/state";
 import { executeVimCommand } from "./ex-commands";
 import type { VimModeOptions, VimModeStorage } from "./types";
@@ -210,6 +231,140 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
       };
     };
 
+    const writeToRegister = (
+      slice: import("@tiptap/pm/model").Slice,
+      kind: "yank" | "delete",
+      transaction?: Transaction
+    ) => {
+      const { state, view } = context.editor;
+      const engineState = vimEnginePluginKey.getState(state);
+      // Keep the old storage value in sync until every legacy paste path has
+      // moved to the engine state.
+      context.storage.yankSlice = slice;
+      if (!engineState) {
+        return transaction;
+      }
+      const update = writeRegister(engineState, slice, kind);
+      if (transaction) {
+        return transaction.setMeta(vimEnginePluginKey, update);
+      }
+      view.dispatch(state.tr.setMeta(vimEnginePluginKey, update));
+      return undefined;
+    };
+
+    const consumeRegisterPrefix = (key: string): boolean | null => {
+      if (
+        !context.storage.enabled ||
+        context.storage.commandActive ||
+        context.storage.mode === "insert" ||
+        key.length !== 1
+      ) {
+        return null;
+      }
+      const { state, view } = context.editor;
+      const engineState = vimEnginePluginKey.getState(state);
+      if (!engineState) {
+        return null;
+      }
+      if (engineState.pendingRegister) {
+        if (!isValidRegisterName(key)) {
+          view.dispatch(state.tr.setMeta(vimEnginePluginKey, clearActiveRegister()));
+          return null;
+        }
+        view.dispatch(state.tr.setMeta(vimEnginePluginKey, selectRegister(key)));
+        return true;
+      }
+      if (key !== '"') {
+        return null;
+      }
+      view.dispatch(
+        state.tr.setMeta(vimEnginePluginKey, {
+          pendingRegister: true,
+          pendingTokens: [],
+        })
+      );
+      return true;
+    };
+
+    let macroReplayDepth = 0;
+
+    const consumeMacroControl = (key: string): boolean | null => {
+      if (
+        !context.storage.enabled ||
+        context.storage.commandActive ||
+        context.storage.mode !== "normal" ||
+        key.length !== 1
+      ) {
+        return null;
+      }
+      const { state, view } = context.editor;
+      const engineState = vimEnginePluginKey.getState(state);
+      if (!engineState) {
+        return null;
+      }
+      if (engineState.pendingMacroRegister) {
+        if (!isValidMacroRegisterName(key)) {
+          view.dispatch(state.tr.setMeta(vimEnginePluginKey, { pendingMacroRegister: false }));
+          return null;
+        }
+        view.dispatch(state.tr.setMeta(vimEnginePluginKey, beginMacroRecording(engineState, key)));
+        return true;
+      }
+      if (engineState.pendingMacroPlayback) {
+        const register = key === "@" ? engineState.lastMacroRegister : key;
+        if (!register || !isValidMacroRegisterName(register)) {
+          view.dispatch(state.tr.setMeta(vimEnginePluginKey, { pendingMacroPlayback: false }));
+          return null;
+        }
+        if (engineState.recordingMacro && macroReplayDepth === 0) {
+          view.dispatch(state.tr.setMeta(vimEnginePluginKey, recordKey(engineState, key)));
+        }
+        const { commands, update } = consumeMacroPlayback(engineState, register);
+        view.dispatch(state.tr.setMeta(vimEnginePluginKey, update));
+        macroReplayDepth += 1;
+        try {
+          for (let repeat = 0; repeat < engineState.pendingMacroCount; repeat += 1) {
+            for (const operation of commands) {
+              executeVimOperation(operation);
+            }
+          }
+        } finally {
+          macroReplayDepth -= 1;
+        }
+        return true;
+      }
+      if (key === "q") {
+        view.dispatch(
+          state.tr.setMeta(
+            vimEnginePluginKey,
+            engineState.recordingMacro
+              ? stopMacroRecording()
+              : { pendingMacroRegister: true, pendingTokens: [] }
+          )
+        );
+        return true;
+      }
+      if (key === "@") {
+        if (engineState.recordingMacro && macroReplayDepth === 0) {
+          view.dispatch(state.tr.setMeta(vimEnginePluginKey, recordKey(engineState, key)));
+        }
+        const count = engineState.pendingTokens.length && engineState.pendingTokens.every((token) => /^\d$/u.test(token))
+          ? Number(engineState.pendingTokens.join("")) || 1
+          : 1;
+        view.dispatch(state.tr.setMeta(vimEnginePluginKey, requestMacroPlayback(count)));
+        return true;
+      }
+      return null;
+    };
+
+    const recordMacroKey = (key: string) => {
+      const { state, view } = context.editor;
+      const engineState = vimEnginePluginKey.getState(state);
+      if (engineState?.recordingMacro && macroReplayDepth === 0) {
+        view.dispatch(state.tr.setMeta(vimEnginePluginKey, recordKey(engineState, key)));
+      }
+    };
+
     const deleteCurrentLine = () => {
       const { state, view } = context.editor;
       const { $head } = state.selection;
@@ -227,7 +382,8 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         // A ProseMirror document must retain one valid text block, but an
         // empty line between (or beside) other blocks should disappear on dd.
         if (textblockCount > 1) {
-          const tr = state.tr.delete(blockStart, blockEnd);
+          let tr = state.tr.delete(blockStart, blockEnd);
+          tr = writeToRegister(state.doc.slice(blockStart, blockEnd), "delete", tr) ?? tr;
           const cursor = getNormalCursorPos(
             tr.doc,
             Math.min(blockStart, tr.doc.content.size)
@@ -242,7 +398,11 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
           return true;
         }
       }
-      view.dispatch(state.tr.delete(start, end).scrollIntoView());
+      let tr = state.tr.delete(start, end);
+      if (start !== end) {
+        tr = writeToRegister(state.doc.slice(start, end), "delete", tr) ?? tr;
+      }
+      view.dispatch(tr.scrollIntoView());
       context.storage.mode = "normal";
       return true;
     };
@@ -252,18 +412,23 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
       const { $head } = state.selection;
       const start = $head.start($head.depth);
       const end = $head.end($head.depth);
-      context.storage.yankSlice = state.doc.slice(start, end);
+      writeToRegister(state.doc.slice(start, end), "yank");
       return true;
     };
 
     const pasteAfter = () => {
       const { state, view } = context.editor;
-      if (!context.storage.yankSlice) {
+      const engineState = vimEnginePluginKey.getState(state);
+      const slice = engineState ? readRegister(engineState) : context.storage.yankSlice;
+      if (!slice) {
         return true;
       }
       const pos = state.selection.$head.pos;
       view.dispatch(
-        state.tr.replaceRange(pos, pos, context.storage.yankSlice).scrollIntoView()
+        state.tr
+          .replaceRange(pos, pos, slice)
+          .setMeta(vimEnginePluginKey, clearActiveRegister())
+          .scrollIntoView()
       );
       if (context.storage.mode === "normal") {
         return setNormalSelectionAt(pos);
@@ -273,12 +438,17 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
 
     const pasteBefore = () => {
       const { state, view } = context.editor;
-      if (!context.storage.yankSlice) {
+      const engineState = vimEnginePluginKey.getState(state);
+      const slice = engineState ? readRegister(engineState) : context.storage.yankSlice;
+      if (!slice) {
         return true;
       }
       const pos = state.selection.from;
       view.dispatch(
-        state.tr.replaceRange(pos, pos, context.storage.yankSlice).scrollIntoView()
+        state.tr
+          .replaceRange(pos, pos, slice)
+          .setMeta(vimEnginePluginKey, clearActiveRegister())
+          .scrollIntoView()
       );
       return context.storage.mode === "normal" ? setNormalSelectionAt(pos) : true;
     };
@@ -749,10 +919,12 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         return true;
       }
       if (operator === "y") {
-        context.storage.yankSlice = state.doc.slice(rangeFrom, rangeTo);
+        writeToRegister(state.doc.slice(rangeFrom, rangeTo), "yank");
         return setNormalSelectionAt(rangeFrom);
       }
-      view.dispatch(state.tr.delete(rangeFrom, rangeTo).scrollIntoView());
+      let tr = state.tr.delete(rangeFrom, rangeTo);
+      tr = writeToRegister(state.doc.slice(rangeFrom, rangeTo), "delete", tr) ?? tr;
+      view.dispatch(tr.scrollIntoView());
       return operator === "c" ? enterInsertAt(rangeFrom) : setNormalSelectionAt(rangeFrom);
     };
 
@@ -859,7 +1031,7 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
           dispatch: (transaction) => context.editor.view.dispatch(transaction),
         },
         key,
-        executeEngineCommand
+        runEngineCommand
       );
     };
 
@@ -883,11 +1055,11 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
           acceptedModes: ["visual"],
         },
         key,
-        executeEngineCommand
+        runEngineCommand
       );
     };
 
-    const executeEngineCommand = (command: ParsedVimCommand) => {
+    const executeParsedCommand = (command: ParsedVimCommand): boolean => {
       const repeat = (action: () => boolean) => {
         let handled = true;
         for (let index = 0; index < command.count; index += 1) {
@@ -1006,6 +1178,14 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
               clampPos(state.doc.content.size, state.selection.from + (state.selection.empty ? 0 : 1))
             );
           }
+          case "I": {
+            const { state } = context.editor;
+            return enterInsertAt(state.selection.$head.start(state.selection.$head.depth));
+          }
+          case "A": {
+            const { state } = context.editor;
+            return enterInsertAt(state.selection.$head.end(state.selection.$head.depth));
+          }
           case "o":
             return openLine("below");
           case "O":
@@ -1020,6 +1200,16 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
             return pasteBefore();
           case "u":
             return context.editor.commands.undo?.() ?? false;
+          case ".": {
+            const lastChange = vimEnginePluginKey.getState(context.editor.state)?.lastChange;
+            if (!lastChange) {
+              return true;
+            }
+            for (const operation of lastChange) {
+              executeVimOperation(operation);
+            }
+            return true;
+          }
           case "gb":
             return context.editor.chain().focus().toggleBold().run();
           case "gi":
@@ -1070,18 +1260,92 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
       return false;
     };
 
+    const executeVimOperation = (operation: VimOperation): boolean => {
+      if (operation.type === "command") {
+        return executeParsedCommand(operation.command);
+      }
+      if (operation.type === "insertText") {
+        const state = context.editor.state;
+        const { from, to } = state.selection;
+        context.editor.view.dispatch(
+          state.tr
+            .insertText(operation.text, from, to)
+            .setMeta(vimMacroReplayMeta, true)
+            .scrollIntoView()
+        );
+        return true;
+      }
+      if (operation.type === "deleteBackward") {
+        const { state, view } = context.editor;
+        const { from, to, empty, $from } = state.selection;
+        if (!empty) {
+          view.dispatch(state.tr.delete(from, to).setMeta(vimMacroReplayMeta, true).scrollIntoView());
+          return true;
+        }
+        if ($from.parentOffset > 0) {
+          view.dispatch(state.tr.delete(from - 1, from).setMeta(vimMacroReplayMeta, true).scrollIntoView());
+          return true;
+        }
+        return context.editor.commands.joinBackward();
+      }
+      if (operation.type === "deleteForward") {
+        const { state, view } = context.editor;
+        const { from, to, empty, $from } = state.selection;
+        if (!empty) {
+          view.dispatch(state.tr.delete(from, to).setMeta(vimMacroReplayMeta, true).scrollIntoView());
+          return true;
+        }
+        if ($from.parentOffset < $from.parent.content.size) {
+          view.dispatch(state.tr.delete(from, from + 1).setMeta(vimMacroReplayMeta, true).scrollIntoView());
+          return true;
+        }
+        return context.editor.commands.joinForward();
+      }
+      if (operation.type === "splitBlock") {
+        return context.editor.commands.splitBlock();
+      }
+      if (operation.type === "exCommand") {
+        context.storage.commandActive = true;
+        context.storage.commandBuffer = operation.command;
+        context.storage.commandPaletteQuery = operation.command;
+        return executeCommand();
+      }
+      if (operation.type === "key") {
+        return shortcuts[operation.key]?.() ?? false;
+      }
+      context.editor.commands.enterNormalMode();
+      return true;
+    };
+
+    const runEngineCommand = (command: ParsedVimCommand) => {
+      const operation: VimOperation = { type: "command", command };
+      const handled = executeVimOperation(operation);
+      if (!handled) {
+        return handled;
+      }
+      const { state, view } = context.editor;
+      const engineState = vimEnginePluginKey.getState(state);
+      if (engineState && (isRepeatableChange(command) || engineState.recordingMacro)) {
+        view.dispatch(state.tr.setMeta(vimEnginePluginKey, recordCommand(engineState, command)));
+      }
+      return handled;
+    };
+
     const yankSelection = () => {
       const { state, view } = context.editor;
       if (state.selection.empty) {
         return true;
       }
-      context.storage.yankSlice = state.selection.content();
+      const slice = state.selection.content();
+      context.storage.yankSlice = slice;
       context.storage.mode = "normal";
       context.storage.visualAnchor = null;
       const pos = state.selection.from;
       const { from, to } = getNormalRange(state.doc, pos);
+      let tr = state.tr.setSelection(TextSelection.create(state.doc, from, to));
+      tr = writeToRegister(slice, "yank", tr) ?? tr;
       view.dispatch(
-        state.tr.setSelection(TextSelection.create(state.doc, from, to))
+        tr
       );
       return true;
     };
@@ -1127,8 +1391,15 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
       return true;
     };
 
-    const executeCommand = () =>
-      executeVimCommand({
+    const executeCommand = () => {
+      const { state, view } = context.editor;
+      const engineState = vimEnginePluginKey.getState(state);
+      if (engineState?.recordingMacro && macroReplayDepth === 0) {
+        view.dispatch(
+          state.tr.setMeta(vimEnginePluginKey, recordExCommand(engineState, context.storage.commandBuffer))
+        );
+      }
+      return executeVimCommand({
         editor: context.editor,
         storage: context.storage,
         onQuit: context.options.onQuit,
@@ -1136,6 +1407,7 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         replaceSelection,
         jumpSearch,
       });
+    };
 
     const enterCommandMode = () => {
       if (context.storage.mode === "insert") {
@@ -1234,6 +1506,15 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         if (context.storage.mode === "insert" && key.length === 1) {
           return false;
         }
+        const macroResult = consumeMacroControl(key);
+        if (macroResult !== null) {
+          return macroResult;
+        }
+        recordMacroKey(key);
+        const registerResult = consumeRegisterPrefix(key);
+        if (registerResult !== null) {
+          return registerResult;
+        }
         const visualFormatResult = consumeVisualFormattingKey(key);
         if (visualFormatResult !== null) {
           return visualFormatResult;
@@ -1294,23 +1575,55 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
       );
     };
 
+    const recordNormalModeStep = () => {
+      const { state, view } = context.editor;
+      const engineState = vimEnginePluginKey.getState(state);
+      if (engineState?.recordingMacro || engineState?.recordingChange) {
+        view.dispatch(state.tr.setMeta(vimEnginePluginKey, recordNormalMode(engineState)));
+      }
+    };
+
     const shortcuts: Record<string, (props?: unknown) => boolean> = {
       Escape: () => {
         if (context.storage.commandActive) {
           return exitCommandMode();
         }
         context.storage.pendingCount = "";
+        recordMacroKey("Escape");
+        recordNormalModeStep();
         context.editor.commands.enterNormalMode();
         return true;
       },
       Enter: () => {
-        if (!context.storage.enabled || !context.storage.commandActive) {
+        if (!context.storage.enabled) {
+          return false;
+        }
+        if (!context.storage.commandActive && context.storage.mode === "insert") {
+          const { state, view } = context.editor;
+          const engineState = vimEnginePluginKey.getState(state);
+          if (engineState) {
+            view.dispatch(state.tr.setMeta(vimEnginePluginKey, recordEditOperation(engineState, { type: "splitBlock" })));
+          }
+          return executeVimOperation({ type: "splitBlock" });
+        }
+        if (!context.storage.commandActive) {
           return false;
         }
         return executeCommand();
       },
       Backspace: () => {
-        if (!context.storage.enabled || !context.storage.commandActive) {
+        if (!context.storage.enabled) {
+          return false;
+        }
+        if (!context.storage.commandActive && context.storage.mode === "insert") {
+          const { state, view } = context.editor;
+          const engineState = vimEnginePluginKey.getState(state);
+          if (engineState) {
+            view.dispatch(state.tr.setMeta(vimEnginePluginKey, recordEditOperation(engineState, { type: "deleteBackward" })));
+          }
+          return executeVimOperation({ type: "deleteBackward" });
+        }
+        if (!context.storage.commandActive) {
           return false;
         }
         context.storage.commandBuffer = context.storage.commandBuffer.slice(0, -1);
@@ -1318,6 +1631,17 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         context.storage.commandSelectionIndex = null;
         syncCommandUI();
         return true;
+      },
+      Delete: () => {
+        if (!context.storage.enabled || context.storage.commandActive || context.storage.mode !== "insert") {
+          return false;
+        }
+        const { state, view } = context.editor;
+        const engineState = vimEnginePluginKey.getState(state);
+        if (engineState) {
+          view.dispatch(state.tr.setMeta(vimEnginePluginKey, recordEditOperation(engineState, { type: "deleteForward" })));
+        }
+        return executeVimOperation({ type: "deleteForward" });
       },
       Tab: () => {
         if (!context.storage.enabled || !context.storage.commandActive) {
@@ -1395,6 +1719,8 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
       "/": () => enterSearchMode(1),
       "?": () => enterSearchMode(-1),
       "Mod-c": withEnabled(() => {
+        recordMacroKey("Mod-c");
+        recordNormalModeStep();
         context.editor.commands.enterNormalMode();
         return true;
       }),
@@ -1648,7 +1974,10 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
     };
 
     for (const digit of "123456789") {
-      shortcuts[digit] = () => consumeEngineKey(digit) ?? appendCount(digit);
+      shortcuts[digit] = () => {
+        recordMacroKey(digit);
+        return consumeEngineKey(digit) ?? appendCount(digit);
+      };
     }
 
     for (const char of printableChars) {

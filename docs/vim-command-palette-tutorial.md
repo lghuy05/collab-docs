@@ -59,4 +59,34 @@ after the ProseMirror Vim engine has parsed the key sequence. In Normal mode,
 they affect the current cursor selection; Visual mode is the recommended way
 to format a meaningful range.
 
-This is Vim-compatible rich-document editing, not a full terminal Vim implementation. Commands that require plain-text buffers, terminal windows, macros, or visual block columns are intentionally not presented as supported behavior.
+## Registers, repeat, and macros
+
+Yanks and deletes now write to local Vim registers. The unnamed register (`"`)
+is used by `p` and `P`; yanks are also stored in `0`, while deletes shift
+through numbered registers. Use a register prefix to target a named register:
+
+```text
+"ayy     # yank into register a
+"ap      # paste from register a
+```
+
+Repeat a structured edit with `.`. The engine currently repeats parsed edits
+such as `dw`, `cc`, `d$`, `o`, and `p`.
+
+Macros record normalized Vim input and replay it through the same key
+dispatcher: use `qa` to start recording into register `a`, `q` to stop, and
+`@a` to replay. `2@a` repeats it twice, `@@` repeats the last executed macro,
+and `qA` appends to the existing `a` macro. This includes motions, counts,
+character arguments such as `f{char}` and `t{char}`, Insert-mode text,
+Backspace, Delete, Enter, Escape, and supported Ex commands. For example,
+`qaA.<Esc>j0q` records appending a period, returning to Normal mode, moving
+down, and returning to the start of the next line. Macro state is local to
+your editor session.
+
+The macro key stream is deliberately separate from rich-document register
+content. Named registers used by `"ay` / `"ap` hold Tiptap document slices;
+named macro registers hold replayable editor operations. That keeps a macro
+safe across collaborative position remapping, but differs from terminal Vim,
+where a named register can be treated as either text or macro characters.
+
+This is Vim-compatible rich-document editing, not a full terminal Vim implementation. Commands that require terminal windows, arbitrary script execution, or visual block columns are intentionally not presented as supported behavior.
