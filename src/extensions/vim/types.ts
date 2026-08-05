@@ -39,6 +39,10 @@ export interface PendingWordOp {
   expires: number;
 }
 
+export interface PendingReplace {
+  expires: number;
+}
+
 export interface VimModeStorage {
   enabled: boolean;
   mode: VimMode;
@@ -50,7 +54,14 @@ export interface VimModeStorage {
   pendingFind: PendingFind | null;
   lastFind: LastFind | null;
   pendingWordOp: PendingWordOp | null;
+  pendingReplace: PendingReplace | null;
+  pendingCount: string;
   commandActive: boolean;
   commandBuffer: string;
+  commandPaletteQuery: string;
+  commandSelectionIndex: number | null;
   searchQuery: string;
+  searchDirection: 1 | -1;
+  searchMatchCount: number;
+  searchMatchIndex: number | null;
 }

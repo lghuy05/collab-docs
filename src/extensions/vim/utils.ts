@@ -13,20 +13,26 @@ export const isCommandInputKey = (key: string, event: KeyboardEvent) => {
   if (event.ctrlKey || event.metaKey || event.altKey) {
     return false;
   }
-  return key.length === 1 && printableChars.includes(key);
+  return key === " " || (key.length === 1 && printableChars.includes(key));
 };
 
 export const updateCommandAttributes = (
   element: HTMLElement,
-  storage: Pick<VimModeStorage, "enabled" | "commandActive" | "commandBuffer">
+  storage: Pick<VimModeStorage, "enabled" | "commandActive" | "commandBuffer" | "commandSelectionIndex">
 ) => {
   if (!storage.enabled || !storage.commandActive) {
     element.removeAttribute("data-vim-command");
     element.removeAttribute("data-vim-command-active");
+    element.removeAttribute("data-vim-command-index");
     return;
   }
   element.setAttribute("data-vim-command", storage.commandBuffer);
   element.setAttribute("data-vim-command-active", "true");
+  if (storage.commandSelectionIndex == null) {
+    element.removeAttribute("data-vim-command-index");
+  } else {
+    element.setAttribute("data-vim-command-index", String(storage.commandSelectionIndex));
+  }
 };
 
 export const getNormalRange = (doc: Selection["$from"]["doc"], pos: number) => {
@@ -55,6 +61,31 @@ export const getNormalRange = (doc: Selection["$from"]["doc"], pos: number) => {
 
 export const getBasePos = (mode: VimMode, selection: Selection) =>
   mode === "normal" && !selection.empty ? selection.from : selection.$head.pos;
+
+export const getFirstTextblockPos = (doc: Selection["$from"]["doc"]) => {
+  let firstPosition: number | null = null;
+  doc.descendants((node, pos) => {
+    if (firstPosition == null && node.isTextblock) {
+      firstPosition = pos + 1;
+      return false;
+    }
+    return false;
+  });
+  return firstPosition ?? 0;
+};
+
+export const getNormalCursorPos = (
+  doc: Selection["$from"]["doc"],
+  caretPos: number
+) => {
+  const $caret = doc.resolve(clampPos(doc.content.size, caretPos));
+  if ($caret.parent.isTextblock) {
+    const start = $caret.start();
+    const end = $caret.end();
+    return caretPos <= start ? start : Math.max(start, Math.min(end - 1, caretPos - 1));
+  }
+  return getFirstTextblockPos(doc);
+};
 
 export const clampToTextblock = (
   state: { doc: ProseMirrorNode },

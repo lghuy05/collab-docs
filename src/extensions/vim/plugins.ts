@@ -64,6 +64,8 @@ export const createVimPlugins = (storage: VimModeStorage) => {
           }
           if (storage.commandActive) {
             storage.commandBuffer += text;
+            storage.commandPaletteQuery = storage.commandBuffer;
+            storage.commandSelectionIndex = null;
             updateCommandAttributes(view.dom as HTMLElement, storage);
             return true;
           }
@@ -73,6 +75,8 @@ export const createVimPlugins = (storage: VimModeStorage) => {
           if (storage.enabled && !storage.commandActive && storage.mode !== "insert" && event.key === ":") {
             storage.commandActive = true;
             storage.commandBuffer = "";
+            storage.commandPaletteQuery = "";
+            storage.commandSelectionIndex = null;
             updateCommandAttributes(view.dom as HTMLElement, storage);
             return true;
           }
@@ -81,6 +85,8 @@ export const createVimPlugins = (storage: VimModeStorage) => {
           }
           if (isCommandInputKey(event.key, event)) {
             storage.commandBuffer += event.key;
+            storage.commandPaletteQuery = storage.commandBuffer;
+            storage.commandSelectionIndex = null;
             updateCommandAttributes(view.dom as HTMLElement, storage);
           }
           return true;
@@ -110,8 +116,9 @@ export const createVimPlugins = (storage: VimModeStorage) => {
           if (
             storage.mode === "normal" &&
             state.selection.empty &&
-            state.selection.$head.parent.isTextblock &&
-            state.selection.$head.parent.content.size === 0
+            (state.doc.content.size === 0 ||
+              (state.selection.$head.parent.isTextblock &&
+                state.selection.$head.parent.content.size === 0))
           ) {
             decorations.push(
               Decoration.widget(state.selection.from, () => {
