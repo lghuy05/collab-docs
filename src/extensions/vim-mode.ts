@@ -7,9 +7,6 @@ import { createVimPlugins } from "./vim/plugins";
 import type {
   LastFind,
   PendingFind,
-  PendingMotion,
-  PendingOp,
-  PendingOpMotion,
   PendingReplace,
   PendingWordOp,
   VimMode,
@@ -35,9 +32,6 @@ declare module "@tiptap/core" {
       mode: VimMode;
       visualAnchor: number | null;
       yankSlice: Slice | null;
-      pendingOp: PendingOp | null;
-      pendingOpMotion: PendingOpMotion | null;
-      pendingMotion: PendingMotion | null;
       pendingFind: PendingFind | null;
       lastFind: LastFind | null;
       pendingWordOp: PendingWordOp | null;
@@ -68,9 +62,6 @@ export const VimModeExtension = Extension.create<VimModeOptions>({
       mode: "insert" as VimMode,
       visualAnchor: null as number | null,
       yankSlice: null as Slice | null,
-      pendingOp: null as PendingOp | null,
-      pendingOpMotion: null as PendingOpMotion | null,
-      pendingMotion: null as PendingMotion | null,
       pendingFind: null as PendingFind | null,
       lastFind: null as LastFind | null,
       pendingWordOp: null as PendingWordOp | null,
@@ -89,9 +80,6 @@ export const VimModeExtension = Extension.create<VimModeOptions>({
   addCommands() {
     const resetTransientState = () => {
       this.storage.visualAnchor = null;
-      this.storage.pendingOp = null;
-      this.storage.pendingOpMotion = null;
-      this.storage.pendingMotion = null;
       this.storage.pendingFind = null;
       this.storage.lastFind = null;
       this.storage.pendingWordOp = null;

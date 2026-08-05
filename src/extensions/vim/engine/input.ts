@@ -1,7 +1,11 @@
 import type { EditorState, Transaction } from "@tiptap/pm/state";
 
 import { defaultVimDefinitions } from "./default-definitions";
-import { parseVimTokens, type ParsedVimCommand } from "./grammar";
+import {
+  parseVimTokens,
+  type ParsedVimCommand,
+  type VimCommandDefinition,
+} from "./grammar";
 import { vimEnginePluginKey } from "./state";
 
 export interface VimEngineInput {
@@ -10,6 +14,8 @@ export interface VimEngineInput {
   commandActive: boolean;
   state: EditorState;
   dispatch: (transaction: Transaction) => void;
+  definitions?: readonly VimCommandDefinition[];
+  acceptedModes?: readonly VimEngineInput["mode"][];
 }
 
 /**
@@ -25,7 +31,7 @@ export const consumeVimEngineInput = (
   if (
     !input.enabled ||
     input.commandActive ||
-    input.mode !== "normal" ||
+    !(input.acceptedModes ?? ["normal"]).includes(input.mode) ||
     key.length !== 1
   ) {
     return null;
@@ -33,7 +39,7 @@ export const consumeVimEngineInput = (
 
   const engineState = vimEnginePluginKey.getState(input.state);
   const tokens = [...(engineState?.pendingTokens ?? []), key];
-  const result = parseVimTokens(tokens, defaultVimDefinitions);
+  const result = parseVimTokens(tokens, input.definitions ?? defaultVimDefinitions);
   if (result.status === "invalid") {
     if (engineState?.pendingTokens.length) {
       input.dispatch(input.state.tr.setMeta(vimEnginePluginKey, { pendingTokens: [] }));

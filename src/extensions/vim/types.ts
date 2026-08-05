@@ -6,21 +6,6 @@ export interface VimModeOptions {
   onQuit?: () => void;
 }
 
-export interface PendingOp {
-  key: "d" | "y";
-  expires: number;
-}
-
-export interface PendingOpMotion {
-  op: "c" | "d" | "y";
-  expires: number;
-}
-
-export interface PendingMotion {
-  key: "g";
-  expires: number;
-}
-
 export interface PendingFind {
   dir: 1 | -1;
   expires: number;
@@ -48,9 +33,6 @@ export interface VimModeStorage {
   mode: VimMode;
   visualAnchor: number | null;
   yankSlice: Slice | null;
-  pendingOp: PendingOp | null;
-  pendingOpMotion: PendingOpMotion | null;
-  pendingMotion: PendingMotion | null;
   pendingFind: PendingFind | null;
   lastFind: LastFind | null;
   pendingWordOp: PendingWordOp | null;

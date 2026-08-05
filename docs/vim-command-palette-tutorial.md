@@ -36,6 +36,27 @@ Formatting commands apply to the current selection or future inserted text. Stru
 
 Vim mode starts in Insert mode. Press `Esc` for Normal mode, then use motions such as `h`, `j`, `k`, `l`, `w`, `e`, `b`, `0`, `^`, `$`, `gg`, and `G`.
 
-Common edits include `dd`, `dw`, `ciw`, `x`, `X`, `D`, `C`, `s`, `S`, `r{character}`, `J`, `p`, and `P`. Count prefixes work with core motions and word operators, for example `3w`, `5j`, and `2dw`.
+Common edits include `dd`, `cc`, `dw`, `d$`, `d0`, `dj`, `ciw`, `caw`, `di"`, `da(`, `x`, `X`, `D`, `C`, `s`, `S`, `r{character}`, `J`, `p`, and `P`. Text objects support words, quotes, parentheses, brackets, and braces. Count prefixes work with core motions and word operators, for example `3w`, `5j`, and `2dw`.
+
+## Keyboard-first formatting
+
+Use the command palette for discoverable rich-text commands, or use these
+`g`-prefixed document shortcuts when you want to stay on the keyboard. For
+formatting, first select text with `v` or an entire line with `V`; for example,
+`V` then `gb` bolds the line.
+
+| Key | Action |
+| --- | --- |
+| `gb` | Toggle bold |
+| `gi` | Toggle italic |
+| `gu` | Toggle underline |
+| `g1` … `g5` | Toggle heading level 1 … 5 |
+| `gp` | Convert the current block to a paragraph |
+| `gc` | Start a collaborative comment |
+
+These are Collab Docs additions, so they intentionally use Tiptap commands
+after the ProseMirror Vim engine has parsed the key sequence. In Normal mode,
+they affect the current cursor selection; Visual mode is the recommended way
+to format a meaningful range.
 
 This is Vim-compatible rich-document editing, not a full terminal Vim implementation. Commands that require plain-text buffers, terminal windows, macros, or visual block columns are intentionally not presented as supported behavior.
