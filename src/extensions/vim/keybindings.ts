@@ -3,6 +3,9 @@ import { Selection, TextSelection } from "@tiptap/pm/state";
 import { canSplit } from "@tiptap/pm/transform";
 
 import { getVimCommandSuggestions } from "./command-registry";
+import { consumeVimEngineInput } from "./engine/input";
+import type { ParsedVimCommand } from "./engine/grammar";
+import { vimEnginePluginKey } from "./engine/state";
 import { executeVimCommand } from "./ex-commands";
 import type { VimModeOptions, VimModeStorage } from "./types";
 import {
@@ -67,9 +70,13 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
     // Visual mode keeps an anchor and extends the range with movement.
     const setVisualSelectionAt = (pos: number) => {
       const { state, view } = context.editor;
-      const anchor = context.storage.visualAnchor ?? state.selection.$head.pos;
+      const anchor = vimEnginePluginKey.getState(state)?.visualAnchor
+        ?? context.storage.visualAnchor
+        ?? state.selection.$head.pos;
       view.dispatch(
-        state.tr.setSelection(TextSelection.create(state.doc, anchor, pos))
+        state.tr
+          .setSelection(TextSelection.create(state.doc, anchor, pos))
+          .setMeta(vimEnginePluginKey, { mode: "visual", visualAnchor: anchor })
       );
       return true;
     };
@@ -80,9 +87,15 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
       context.storage.mode = "insert";
       context.storage.visualAnchor = null;
       view.dispatch(
-        state.tr.setSelection(
-          TextSelection.create(state.doc, clampPos(state.doc.content.size, pos))
-        )
+        state.tr
+          .setSelection(
+            TextSelection.create(state.doc, clampPos(state.doc.content.size, pos))
+          )
+          .setMeta(vimEnginePluginKey, {
+            mode: "insert",
+            pendingTokens: [],
+            visualAnchor: null,
+          })
       );
       return true;
     };
@@ -309,7 +322,13 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
       const cursorPosition = direction === "above"
         ? splitPosition
         : splitPosition + 2;
-      tr = tr.setSelection(TextSelection.create(tr.doc, cursorPosition));
+      tr = tr
+        .setSelection(TextSelection.create(tr.doc, cursorPosition))
+        .setMeta(vimEnginePluginKey, {
+          mode: "insert",
+          pendingTokens: [],
+          visualAnchor: null,
+        });
       view.dispatch(tr.scrollIntoView());
       return true;
     };
@@ -733,6 +752,149 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
       return null;
     };
 
+    /**
+     * Tiptap remains responsible for rich-editor actions, while command parsing
+     * and pending input live in the ProseMirror plugin. This lets the adapter
+     * execute a parsed command without keeping timing-based key state in
+     * extension storage.
+     */
+    const consumeEngineKey = (key: string): boolean | null => {
+      if (
+        !context.storage.enabled ||
+        context.storage.commandActive ||
+        context.storage.mode !== "normal" ||
+        key.length !== 1
+      ) {
+        return null;
+      }
+
+      return consumeVimEngineInput(
+        {
+          enabled: context.storage.enabled,
+          mode: context.storage.mode,
+          commandActive: context.storage.commandActive,
+          state: context.editor.state,
+          dispatch: (transaction) => context.editor.view.dispatch(transaction),
+        },
+        key,
+        executeEngineCommand
+      );
+    };
+
+    const executeEngineCommand = (command: ParsedVimCommand) => {
+      const repeat = (action: () => boolean) => {
+        let handled = true;
+        for (let index = 0; index < command.count; index += 1) {
+          handled = action();
+          if (!handled) {
+            break;
+          }
+        }
+        return handled;
+      };
+
+      const selectCurrentLine = () => {
+        const { state, view } = context.editor;
+        const { $head } = state.selection;
+        const start = $head.start($head.depth);
+        const end = $head.end($head.depth);
+        context.storage.mode = "visual";
+        context.storage.visualAnchor = start;
+        view.dispatch(
+          state.tr
+            .setSelection(TextSelection.create(state.doc, start, end))
+            .setMeta(vimEnginePluginKey, { mode: "visual", visualAnchor: start })
+        );
+        return true;
+      };
+
+      const applyInnerWord = (operator: "c" | "d" | "y") => {
+        const range = getInnerWordRange();
+        if (!range) {
+          return true;
+        }
+        const { state, view } = context.editor;
+        if (operator === "y") {
+          context.storage.yankSlice = state.doc.slice(range.from, range.to);
+          return setNormalSelectionAt(range.from);
+        }
+        view.dispatch(state.tr.delete(range.from, range.to).scrollIntoView());
+        return operator === "c" ? enterInsertAt(range.from) : setNormalSelectionAt(range.from);
+      };
+
+      if (command.operator && command.target) {
+        const operator = command.operator as "c" | "d" | "y";
+        if (command.target === "d") {
+          return repeat(operator === "y" ? yankCurrentLine : deleteCurrentLine);
+        }
+        if (command.target === "y") {
+          return operator === "y" ? repeat(yankCurrentLine) : true;
+        }
+        if (command.target === "iw") {
+          return applyInnerWord(operator);
+        }
+        if (command.target === "w" || command.target === "e" || command.target === "b") {
+          return applyOpMotion(operator, command.target);
+        }
+        return true;
+      }
+
+      if (command.action) {
+        switch (command.action) {
+          case "i":
+            return enterInsertAt(getBasePos(context.storage.mode, context.editor.state.selection));
+          case "a": {
+            const { state } = context.editor;
+            return enterInsertAt(
+              clampPos(state.doc.content.size, state.selection.from + (state.selection.empty ? 0 : 1))
+            );
+          }
+          case "o":
+            return openLine("below");
+          case "O":
+            return openLine("above");
+          case "v":
+            return context.editor.commands.enterVisualMode();
+          case "V":
+            return selectCurrentLine();
+          case "p":
+            return pasteAfter();
+          case "P":
+            return pasteBefore();
+          case "u":
+            return context.editor.commands.undo?.() ?? false;
+        }
+      }
+
+      switch (command.target) {
+        case "h":
+          return repeat(moveBy(-1));
+        case "j":
+          return repeat(moveLine(1));
+        case "k":
+          return repeat(moveLine(-1));
+        case "l":
+          return repeat(moveBy(1));
+        case "w":
+          return repeat(moveWordStartNext);
+        case "e":
+          return repeat(moveWordEndNext);
+        case "b":
+          return repeat(moveWordStartPrev);
+        case "0":
+          return moveToLineBoundary("start");
+        case "^":
+          return moveToLineBoundary("firstNonBlank");
+        case "$":
+          return moveToLineBoundary("end");
+        case "gg":
+          return setNormalSelectionAt(getFirstTextblockPos(context.editor.state.doc));
+        case "G":
+          return setNormalSelectionAt(context.editor.state.doc.content.size);
+      }
+      return false;
+    };
+
     const yankSelection = () => {
       const { state, view } = context.editor;
       if (state.selection.empty) {
@@ -896,6 +1058,10 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         }
         if (context.storage.mode === "insert" && key.length === 1) {
           return false;
+        }
+        const engineResult = consumeEngineKey(key);
+        if (engineResult !== null) {
+          return engineResult;
         }
         const pendingOpMotion = handlePendingOpMotionKey(key);
         if (pendingOpMotion !== null) {
@@ -1129,13 +1295,7 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         }
         return openLine("above");
       }),
-      v: () => {
-        if (!context.storage.enabled || context.storage.commandActive) {
-          return false;
-        }
-        if (context.storage.mode === "insert") {
-          return false;
-        }
+      v: withFind("v", () => {
         if (context.storage.mode !== "visual") {
           context.editor.commands.enterVisualMode();
           context.storage.pendingWordOp = {
@@ -1147,7 +1307,7 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         }
         context.editor.commands.enterNormalMode();
         return true;
-      },
+      }),
       V: withFind("V", () => {
         if (context.storage.mode !== "visual") {
           const { state, view } = context.editor;
@@ -1343,7 +1503,7 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
     };
 
     for (const digit of "123456789") {
-      shortcuts[digit] = () => appendCount(digit);
+      shortcuts[digit] = () => consumeEngineKey(digit) ?? appendCount(digit);
     }
 
     for (const char of printableChars) {

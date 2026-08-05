@@ -1,6 +1,7 @@
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, EditorView } from "@tiptap/pm/view";
 
+import { createVimEnginePlugin } from "./engine/plugin";
 import type { VimModeStorage } from "./types";
 import { getNormalRange, isCommandInputKey, updateCommandAttributes } from "./utils";
 
@@ -22,6 +23,7 @@ export const createVimPlugins = (storage: VimModeStorage) => {
   };
 
   return [
+    createVimEnginePlugin(),
     new Plugin({
       view: (view) => {
         updateClasses(view.dom as HTMLElement);

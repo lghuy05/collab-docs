@@ -2,6 +2,7 @@ import { Extension } from "@tiptap/core";
 import { Selection, TextSelection, Transaction } from "@tiptap/pm/state";
 import { Slice } from "@tiptap/pm/model";
 import { createVimKeyboardShortcuts } from "./vim/keybindings";
+import { vimEnginePluginKey } from "./vim/engine/state";
 import { createVimPlugins } from "./vim/plugins";
 import type {
   LastFind,
@@ -117,7 +118,11 @@ export const VimModeExtension = Extension.create<VimModeOptions>({
           this.storage.visualAnchor = null;
           const basePos = getNormalCursorPos(tr.doc, tr.selection.$head.pos);
           const { from, to } = getNormalRange(tr.doc, basePos);
-          dispatch(tr.setSelection(TextSelection.create(tr.doc, from, to)));
+          dispatch(
+            tr
+              .setSelection(TextSelection.create(tr.doc, from, to))
+              .setMeta(vimEnginePluginKey, { mode: "normal", pendingTokens: [], visualAnchor: null })
+          );
         }
         return true;
       },
@@ -126,7 +131,11 @@ export const VimModeExtension = Extension.create<VimModeOptions>({
         this.storage.visualAnchor = null;
         if (dispatch) {
           const pos = tr.selection.$head.pos;
-          dispatch(tr.setSelection(TextSelection.create(tr.doc, pos)));
+          dispatch(
+            tr
+              .setSelection(TextSelection.create(tr.doc, pos))
+              .setMeta(vimEnginePluginKey, { mode: "insert", pendingTokens: [], visualAnchor: null })
+          );
         }
         return true;
       },
@@ -135,7 +144,11 @@ export const VimModeExtension = Extension.create<VimModeOptions>({
         const pos = tr.selection.$head.pos;
         this.storage.visualAnchor = pos;
         if (dispatch) {
-          dispatch(tr.setSelection(TextSelection.create(tr.doc, pos, pos)));
+          dispatch(
+            tr
+              .setSelection(TextSelection.create(tr.doc, pos, pos))
+              .setMeta(vimEnginePluginKey, { mode: "visual", pendingTokens: [], visualAnchor: pos })
+          );
         }
         return true;
       },
