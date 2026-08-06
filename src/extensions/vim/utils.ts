@@ -62,6 +62,51 @@ export const getNormalRange = (doc: Selection["$from"]["doc"], pos: number) => {
 export const getBasePos = (mode: VimMode, selection: Selection) =>
   mode === "normal" && !selection.empty ? selection.from : selection.$head.pos;
 
+export interface VimBlockRange {
+  from: number;
+  to: number;
+}
+
+export const getTextblockRanges = (doc: Selection["$from"]["doc"]) => {
+  const blocks: Array<{ from: number; to: number }> = [];
+  doc.descendants((node, pos) => {
+    if (node.isTextblock) {
+      blocks.push({ from: pos + 1, to: pos + node.nodeSize - 1 });
+    }
+  });
+  return blocks;
+};
+
+/**
+ * Turns two document positions into rectangular, per-textblock ranges.
+ * Columns are document text offsets, deliberately not screen pixels: wrapped
+ * lines and non-text nodes are outside the first Visual Block scope.
+ */
+export const getVisualBlockRanges = (
+  doc: Selection["$from"]["doc"],
+  anchor: number,
+  head: number
+): VimBlockRange[] => {
+  const blocks = getTextblockRanges(doc);
+  const findBlock = (pos: number) => blocks.findIndex((block) => pos >= block.from && pos <= block.to);
+  const anchorIndex = findBlock(clampPos(doc.content.size, anchor));
+  const headIndex = findBlock(clampPos(doc.content.size, head));
+  if (anchorIndex < 0 || headIndex < 0) {
+    return [];
+  }
+  const anchorColumn = Math.max(0, Math.min(blocks[anchorIndex].to - blocks[anchorIndex].from, anchor - blocks[anchorIndex].from));
+  const headColumn = Math.max(0, Math.min(blocks[headIndex].to - blocks[headIndex].from, head - blocks[headIndex].from));
+  const fromColumn = Math.min(anchorColumn, headColumn);
+  const toColumn = Math.max(anchorColumn, headColumn) + 1;
+  const fromIndex = Math.min(anchorIndex, headIndex);
+  const toIndex = Math.max(anchorIndex, headIndex);
+
+  return blocks.slice(fromIndex, toIndex + 1).map((block) => ({
+    from: block.from + Math.min(fromColumn, block.to - block.from),
+    to: block.from + Math.min(toColumn, block.to - block.from),
+  }));
+};
+
 export const getFirstTextblockPos = (doc: Selection["$from"]["doc"]) => {
   let firstPosition: number | null = null;
   doc.descendants((node, pos) => {

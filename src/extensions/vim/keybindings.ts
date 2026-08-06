@@ -37,6 +37,8 @@ import {
   getFirstTextblockPos,
   getNormalCursorPos,
   getNormalRange,
+  getTextblockRanges,
+  getVisualBlockRanges,
   printableChars,
   updateCommandAttributes,
 } from "./utils";
@@ -104,6 +106,117 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
       return true;
     };
 
+    const setVisualBlockSelectionAt = (pos: number) => {
+      const { state, view } = context.editor;
+      const anchor = context.storage.visualBlockAnchor ?? state.selection.$anchor.pos;
+      context.storage.visualBlockAnchor = anchor;
+      view.dispatch(
+        state.tr
+          // Keep the browser selection collapsed. The block is rendered by
+          // decorations, avoiding an incorrect linear DOM highlight.
+          .setSelection(TextSelection.create(state.doc, pos, pos))
+          .setMeta(vimEnginePluginKey, { mode: "visualBlock", visualAnchor: anchor })
+      );
+      return true;
+    };
+
+    const getCurrentVisualBlockRanges = () => {
+      const { state } = context.editor;
+      const anchor = context.storage.visualBlockAnchor;
+      return anchor == null ? [] : getVisualBlockRanges(state.doc, anchor, state.selection.$head.pos);
+    };
+
+    const deleteVisualBlock = (enterInsert = false) => {
+      const { state, view } = context.editor;
+      const ranges = getCurrentVisualBlockRanges();
+      if (!ranges.length) {
+        return true;
+      }
+      context.storage.visualBlockClipboard = ranges.map((range) =>
+        state.doc.textBetween(range.from, range.to, "", "")
+      );
+      let tr = state.tr;
+      for (const range of [...ranges].reverse()) {
+        if (range.from < range.to) {
+          tr = tr.delete(range.from, range.to);
+        }
+      }
+      const insertionPositions = ranges.map((range) => tr.mapping.map(range.from, -1));
+      if (enterInsert) {
+        context.storage.mode = "insert";
+        context.storage.visualBlockAnchor = null;
+        context.storage.visualBlockInsertPositions = insertionPositions;
+        tr = tr
+          .setSelection(TextSelection.create(tr.doc, insertionPositions[0]))
+          .setMeta(vimEnginePluginKey, { mode: "insert", visualAnchor: null, pendingTokens: [] });
+      }
+      view.dispatch(tr.scrollIntoView());
+      if (enterInsert) {
+        return true;
+      }
+      context.editor.commands.enterNormalMode();
+      return true;
+    };
+
+    const yankVisualBlock = () => {
+      const { state } = context.editor;
+      const ranges = getCurrentVisualBlockRanges();
+      if (!ranges.length) {
+        return true;
+      }
+      context.storage.visualBlockClipboard = ranges.map((range) =>
+        state.doc.textBetween(range.from, range.to, "", "")
+      );
+      context.editor.commands.enterNormalMode();
+      return true;
+    };
+
+    const pasteVisualBlock = (after: boolean) => {
+      const lines = context.storage.visualBlockClipboard;
+      const { state, view } = context.editor;
+      if (!lines?.length || context.storage.mode !== "normal") {
+        return false;
+      }
+      const blocks = getTextblockRanges(state.doc);
+      const base = getBasePos(context.storage.mode, state.selection);
+      const current = blocks.findIndex((block) => base >= block.from && base <= block.to);
+      if (current < 0) {
+        return false;
+      }
+      const column = base - blocks[current].from + (after ? 1 : 0);
+      const insertions = lines.flatMap((text, index) => {
+        const block = blocks[current + index];
+        if (!block) {
+          return [];
+        }
+        return [{ text, pos: block.from + Math.max(0, Math.min(column, block.to - block.from)) }];
+      });
+      let tr = state.tr;
+      for (const insertion of [...insertions].reverse()) {
+        tr = tr.insertText(insertion.text, insertion.pos, insertion.pos);
+      }
+      view.dispatch(tr.scrollIntoView());
+      return true;
+    };
+
+    const beginVisualBlockInsert = (edge: "start" | "end") => {
+      const ranges = getCurrentVisualBlockRanges();
+      if (!ranges.length) {
+        return true;
+      }
+      const positions = ranges.map((range) => edge === "start" ? range.from : range.to);
+      const { state, view } = context.editor;
+      context.storage.mode = "insert";
+      context.storage.visualBlockInsertPositions = positions;
+      context.storage.visualBlockAnchor = null;
+      view.dispatch(
+        state.tr
+          .setSelection(TextSelection.create(state.doc, positions[0]))
+          .setMeta(vimEnginePluginKey, { mode: "insert", visualAnchor: null, pendingTokens: [] })
+      );
+      return true;
+    };
+
     // Insert mode drops the selection to a caret.
     const enterInsertAt = (pos: number) => {
       const { state, view } = context.editor;
@@ -140,6 +253,9 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         if (context.storage.mode === "visual") {
           return setVisualSelectionAt(newPos);
         }
+        if (context.storage.mode === "visualBlock") {
+          return setVisualBlockSelectionAt(newPos);
+        }
 
         return false;
       };
@@ -172,6 +288,9 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
           if (context.storage.mode === "visual") {
             return setVisualSelectionAt(0);
           }
+          if (context.storage.mode === "visualBlock") {
+            return setVisualBlockSelectionAt(0);
+          }
           return true;
         }
         const start = view.coordsAtPos(basePos);
@@ -185,6 +304,9 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
             return setVisualSelectionAt(
               clampToTextblock(state, basePos, basePos)
             );
+          }
+          if (context.storage.mode === "visualBlock") {
+            return setVisualBlockSelectionAt(clampToTextblock(state, basePos, basePos));
           }
           return true;
         }
@@ -211,6 +333,9 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
               clampToTextblock(state, basePos, basePos)
             );
           }
+          if (context.storage.mode === "visualBlock") {
+            return setVisualBlockSelectionAt(clampToTextblock(state, basePos, basePos));
+          }
           return true;
         }
         const $target = state.doc.resolve(
@@ -226,6 +351,9 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         }
         if (context.storage.mode === "visual") {
           return setVisualSelectionAt(targetPos);
+        }
+        if (context.storage.mode === "visualBlock") {
+          return setVisualBlockSelectionAt(targetPos);
         }
         return true;
       };
@@ -1615,6 +1743,21 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         if (!context.storage.enabled) {
           return false;
         }
+        if (context.storage.visualBlockInsertPositions?.length) {
+          const { state, view } = context.editor;
+          let tr = state.tr;
+          for (const position of [...context.storage.visualBlockInsertPositions].sort((a, b) => b - a)) {
+            const $position = tr.doc.resolve(position);
+            if ($position.parent.isTextblock && $position.parentOffset > 0) {
+              tr = tr.delete(position - 1, position);
+            }
+          }
+          context.storage.visualBlockInsertPositions = context.storage.visualBlockInsertPositions.map(
+            (position) => tr.mapping.map(position, -1)
+          );
+          view.dispatch(tr.scrollIntoView());
+          return true;
+        }
         if (!context.storage.commandActive && context.storage.mode === "insert") {
           const { state, view } = context.editor;
           const engineState = vimEnginePluginKey.getState(state);
@@ -1724,6 +1867,16 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         context.editor.commands.enterNormalMode();
         return true;
       }),
+      "Ctrl-v": withEnabled(() => {
+        if (context.storage.mode === "insert") {
+          return false;
+        }
+        if (context.storage.mode === "visualBlock") {
+          context.editor.commands.enterNormalMode();
+          return true;
+        }
+        return context.editor.commands.enterVisualBlockMode();
+      }),
       i: withFind("i", () => {
         if (context.storage.mode === "visual") {
           context.storage.pendingWordOp = {
@@ -1752,6 +1905,13 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         );
       }),
       I: withFind("I", () => {
+        if (context.storage.mode === "visualBlock") {
+          return beginVisualBlockInsert("start");
+        }
+        if (context.storage.mode === "visual") {
+          const { state } = context.editor;
+          return enterInsertAt(state.selection.$head.start(state.selection.$head.depth));
+        }
         if (context.storage.mode !== "normal") {
           return false;
         }
@@ -1760,6 +1920,13 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         return enterInsertAt($head.start($head.depth));
       }),
       A: withFind("A", () => {
+        if (context.storage.mode === "visualBlock") {
+          return beginVisualBlockInsert("end");
+        }
+        if (context.storage.mode === "visual") {
+          const { state } = context.editor;
+          return enterInsertAt(state.selection.$head.end(state.selection.$head.depth));
+        }
         if (context.storage.mode !== "normal") {
           return false;
         }
@@ -1838,10 +2005,16 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         context.storage.mode === "insert" ? false : repeatMotion(moveLine(-1))
       ),
       c: withFind("c", () => {
+        if (context.storage.mode === "visualBlock") {
+          return deleteVisualBlock(true);
+        }
         // Normal-mode operators are consumed by the ProseMirror engine.
         return context.storage.mode === "normal";
       }),
       d: withFind("d", () => {
+        if (context.storage.mode === "visualBlock") {
+          return deleteVisualBlock();
+        }
         if (context.storage.mode === "visual") {
           const { state, view } = context.editor;
           view.dispatch(state.tr.deleteSelection().scrollIntoView());
@@ -1854,16 +2027,19 @@ export const createVimKeyboardShortcuts = (context: VimKeyboardContext) => {
         return true;
       }),
       y: withFind("y", () => {
+        if (context.storage.mode === "visualBlock") {
+          return yankVisualBlock();
+        }
         if (context.storage.mode === "visual") {
           return yankSelection();
         }
         return context.storage.mode === "normal";
       }),
       p: withFind("p", () =>
-        context.storage.mode === "insert" ? false : pasteAfter()
+        context.storage.mode === "insert" ? false : pasteVisualBlock(true) || pasteAfter()
       ),
       P: withFind("P", () =>
-        context.storage.mode === "insert" ? false : pasteBefore()
+        context.storage.mode === "insert" ? false : pasteVisualBlock(false) || pasteBefore()
       ),
       x: withFind("x", () =>
         context.storage.mode === "insert" ? false : deleteCharacter("at")

@@ -285,6 +285,15 @@ body {
   color: #0b1220;
 }
 
+.ProseMirror.vim-visual-block-mode {
+  caret-color: transparent;
+}
+
+.ProseMirror .vim-visual-block-selection {
+  background: #93c5fd;
+  color: #0b1220;
+}
+
 .ProseMirror .vim-search-match {
   background: #fde68a;
   color: #111827;

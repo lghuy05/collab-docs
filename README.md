@@ -57,12 +57,12 @@ I did not try to clone Google Docs feature-for-feature. The goal was narrower an
 
 That led to this stack:
 
-- `Next.js 15` for the app shell and routing.
+- `Next.js 16` for the app shell and routing.
 - `Convex` for document storage, queries, mutations, pagination, and search.
 - `Clerk` for authentication and organization-aware access.
 - `Liveblocks` for real-time collaboration, presence, comments, inbox notifications, and room state.
 - `Tiptap` for the editor foundation.
-- A custom `VimModeExtension` to bring normal, insert, and visual mode behavior into the editor.
+- A custom `VimModeExtension` to bring normal, insert, visual, and Visual Block behavior into the editor.
 
 ## Product Flow
 
@@ -135,9 +135,13 @@ I added a custom Tiptap extension for Vim-like behavior, including:
 - multi-key operators like `dw`, `dd`, and `yy`
 - character search behavior
 - command-style interactions inside the editor
+- local registers, dot repeat, and recorded macros (`qa`, `@a`, `2@a`, `@@`)
+- Visual Block selection with `Ctrl-v`, block delete, and block `I` / `A` insertion across text lines
 - a quit hook that can return the user back to the document list
 
 There is also a toolbar toggle for Vim mode, so the app works for both keyboard-first users and regular browser users.
+
+The Vim implementation is intentionally rich-document aware rather than a terminal-Vim clone. It supports the keyboard workflows that map cleanly to Tiptap/ProseMirror while keeping collaboration safe. See the [Vim command palette tutorial](docs/vim-command-palette-tutorial.md) for the supported commands and current boundaries.
 
 ### 4. Collaboration layer
 
@@ -195,13 +199,14 @@ A strong demo sequence is:
 - comments and threaded discussions
 - inbox notifications
 - Vim mode integrated into the editor
+- Vim registers, repeat, macros, and Visual Block editing
 - text formatting, headings, lists, links, tables, task lists, colors, highlights, alignment
 - image upload via signed S3 URLs
 - export to `JSON`, `HTML`, `TXT`, and print to `PDF`
 
 ## Tech Stack
 
-- `Next.js 15`
+- `Next.js 16`
 - `React 19 RC`
 - `TypeScript`
 - `Convex`

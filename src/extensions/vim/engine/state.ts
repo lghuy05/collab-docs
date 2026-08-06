@@ -3,7 +3,7 @@ import type { Slice } from "@tiptap/pm/model";
 import type { VimOperation } from "./grammar";
 
 export interface VimEngineState {
-  mode: "normal" | "insert" | "visual";
+  mode: "normal" | "insert" | "visual" | "visualBlock";
   pendingTokens: string[];
   visualAnchor: number | null;
   pendingRegister: boolean;

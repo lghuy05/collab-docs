@@ -1,6 +1,6 @@
 import type { Slice } from "@tiptap/pm/model";
 
-export type VimMode = "normal" | "insert" | "visual";
+export type VimMode = "normal" | "insert" | "visual" | "visualBlock";
 
 export interface VimModeOptions {
   onQuit?: () => void;
@@ -32,6 +32,10 @@ export interface VimModeStorage {
   enabled: boolean;
   mode: VimMode;
   visualAnchor: number | null;
+  visualBlockAnchor: number | null;
+  /** Carets used while Ctrl-v I/A inserts the same text across text blocks. */
+  visualBlockInsertPositions: number[] | null;
+  visualBlockClipboard: string[] | null;
   yankSlice: Slice | null;
   pendingFind: PendingFind | null;
   lastFind: LastFind | null;
