@@ -15,7 +15,7 @@ type VimStatus = {
   searchMatchIndex: number | null;
   commandSelectionIndex: number | null;
   enabled: boolean;
-  mode: "normal" | "insert" | "visual";
+  mode: "normal" | "insert" | "visual" | "visualBlock";
   recordingMacro: string | null;
   words: number;
 };

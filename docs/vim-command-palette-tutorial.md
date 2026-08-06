@@ -89,4 +89,18 @@ named macro registers hold replayable editor operations. That keeps a macro
 safe across collaborative position remapping, but differs from terminal Vim,
 where a named register can be treated as either text or macro characters.
 
+## Visual Block mode
+
+Press `Ctrl-v` in Normal or Visual mode to select the same character columns
+across multiple text lines. Motions such as `h`, `j`, `k`, and `l` resize the
+rectangle. `y` copies its line fragments, `d` removes each selected column
+range, `c` removes it and starts multi-line insertion, and `I` / `A` insert
+the same typed text at the left or right edge of every selected line. `p` and
+`P` paste a copied block across following text lines. Escape returns to Normal
+mode.
+
+The current implementation is intentionally text-block based: it does not
+create virtual columns past short lines and does not apply rectangular editing
+to tables, images, code node views, or other non-text blocks.
+
 This is Vim-compatible rich-document editing, not a full terminal Vim implementation. Commands that require terminal windows, arbitrary script execution, or visual block columns are intentionally not presented as supported behavior.

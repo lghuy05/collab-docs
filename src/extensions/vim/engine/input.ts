@@ -10,7 +10,7 @@ import { vimEnginePluginKey } from "./state";
 
 export interface VimEngineInput {
   enabled: boolean;
-  mode: "normal" | "insert" | "visual";
+  mode: "normal" | "insert" | "visual" | "visualBlock";
   commandActive: boolean;
   state: EditorState;
   dispatch: (transaction: Transaction) => void;

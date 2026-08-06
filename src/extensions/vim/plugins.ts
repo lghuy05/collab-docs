@@ -2,8 +2,14 @@ import { Plugin, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, EditorView } from "@tiptap/pm/view";
 
 import { createVimEnginePlugin } from "./engine/plugin";
+import { vimEnginePluginKey } from "./engine/state";
 import type { VimModeStorage } from "./types";
-import { getNormalRange, isCommandInputKey, updateCommandAttributes } from "./utils";
+import {
+  getNormalRange,
+  getVisualBlockRanges,
+  isCommandInputKey,
+  updateCommandAttributes,
+} from "./utils";
 
 /** ProseMirror-only view behavior for the Vim extension. */
 export const createVimPlugins = (storage: VimModeStorage) => {
@@ -17,6 +23,7 @@ export const createVimPlugins = (storage: VimModeStorage) => {
     }
     element.classList.toggle("vim-normal-mode", storage.mode === "normal");
     element.classList.toggle("vim-visual-mode", storage.mode === "visual");
+    element.classList.toggle("vim-visual-block-mode", storage.mode === "visualBlock");
     element.classList.toggle("vim-insert-mode", storage.mode === "insert");
     element.setAttribute("data-vim-mode", storage.mode);
     updateCommandAttributes(element, storage);
@@ -32,6 +39,12 @@ export const createVimPlugins = (storage: VimModeStorage) => {
             updateClasses(view.dom as HTMLElement);
             if (!storage.enabled) {
               return;
+            }
+            if (storage.mode === "visualBlock") {
+              const mappedAnchor = vimEnginePluginKey.getState(view.state)?.visualAnchor;
+              if (mappedAnchor != null) {
+                storage.visualBlockAnchor = mappedAnchor;
+              }
             }
             if (storage.mode === "normal" && view.state.selection.empty) {
               const pos = view.state.selection.from;
@@ -69,6 +82,17 @@ export const createVimPlugins = (storage: VimModeStorage) => {
             storage.commandPaletteQuery = storage.commandBuffer;
             storage.commandSelectionIndex = null;
             updateCommandAttributes(view.dom as HTMLElement, storage);
+            return true;
+          }
+          if (storage.visualBlockInsertPositions?.length) {
+            let tr = view.state.tr;
+            for (const pos of [...storage.visualBlockInsertPositions].sort((a, b) => b - a)) {
+              tr = tr.insertText(text, pos, pos);
+            }
+            storage.visualBlockInsertPositions = storage.visualBlockInsertPositions.map(
+              (pos) => tr.mapping.map(pos, 1)
+            );
+            view.dispatch(tr.scrollIntoView());
             return true;
           }
           return storage.mode !== "insert";
@@ -114,6 +138,16 @@ export const createVimPlugins = (storage: VimModeStorage) => {
                 index = text.indexOf(storage.searchQuery, index + storage.searchQuery.length);
               }
             });
+          }
+          if (storage.mode === "visualBlock" && storage.visualBlockAnchor != null) {
+            const head = state.selection.$head.pos;
+            for (const range of getVisualBlockRanges(state.doc, storage.visualBlockAnchor, head)) {
+              if (range.from < range.to) {
+                decorations.push(
+                  Decoration.inline(range.from, range.to, { class: "vim-visual-block-selection" })
+                );
+              }
+            }
           }
           if (
             storage.mode === "normal" &&

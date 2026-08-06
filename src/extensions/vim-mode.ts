@@ -20,6 +20,7 @@ declare module "@tiptap/core" {
       enterNormalMode: () => ReturnType;
       enterInsertMode: () => ReturnType;
       enterVisualMode: () => ReturnType;
+      enterVisualBlockMode: () => ReturnType;
       enableVimMode: () => ReturnType;
       disableVimMode: () => ReturnType;
       toggleVimMode: () => ReturnType;
@@ -31,6 +32,9 @@ declare module "@tiptap/core" {
       enabled: boolean;
       mode: VimMode;
       visualAnchor: number | null;
+      visualBlockAnchor: number | null;
+      visualBlockInsertPositions: number[] | null;
+      visualBlockClipboard: string[] | null;
       yankSlice: Slice | null;
       pendingFind: PendingFind | null;
       lastFind: LastFind | null;
@@ -61,6 +65,9 @@ export const VimModeExtension = Extension.create<VimModeOptions>({
       enabled: true,
       mode: "insert" as VimMode,
       visualAnchor: null as number | null,
+      visualBlockAnchor: null as number | null,
+      visualBlockInsertPositions: null as number[] | null,
+      visualBlockClipboard: null as string[] | null,
       yankSlice: null as Slice | null,
       pendingFind: null as PendingFind | null,
       lastFind: null as LastFind | null,
@@ -80,6 +87,8 @@ export const VimModeExtension = Extension.create<VimModeOptions>({
   addCommands() {
     const resetTransientState = () => {
       this.storage.visualAnchor = null;
+      this.storage.visualBlockAnchor = null;
+      this.storage.visualBlockInsertPositions = null;
       this.storage.pendingFind = null;
       this.storage.lastFind = null;
       this.storage.pendingWordOp = null;
@@ -104,6 +113,8 @@ export const VimModeExtension = Extension.create<VimModeOptions>({
         if (dispatch) {
           this.storage.mode = "normal";
           this.storage.visualAnchor = null;
+          this.storage.visualBlockAnchor = null;
+          this.storage.visualBlockInsertPositions = null;
           const basePos = getNormalCursorPos(tr.doc, tr.selection.$head.pos);
           const { from, to } = getNormalRange(tr.doc, basePos);
           dispatch(
@@ -117,6 +128,8 @@ export const VimModeExtension = Extension.create<VimModeOptions>({
       enterInsertMode: () => ({ tr, dispatch }) => {
         this.storage.mode = "insert";
         this.storage.visualAnchor = null;
+        this.storage.visualBlockAnchor = null;
+        this.storage.visualBlockInsertPositions = null;
         if (dispatch) {
           const pos = tr.selection.$head.pos;
           dispatch(
@@ -136,6 +149,21 @@ export const VimModeExtension = Extension.create<VimModeOptions>({
             tr
               .setSelection(TextSelection.create(tr.doc, pos, pos))
               .setMeta(vimEnginePluginKey, { mode: "visual", pendingTokens: [], visualAnchor: pos })
+          );
+        }
+        return true;
+      },
+      enterVisualBlockMode: () => ({ tr, dispatch }) => {
+        this.storage.mode = "visualBlock";
+        const pos = tr.selection.$head.pos;
+        this.storage.visualAnchor = null;
+        this.storage.visualBlockAnchor = pos;
+        this.storage.visualBlockInsertPositions = null;
+        if (dispatch) {
+          dispatch(
+            tr
+              .setSelection(TextSelection.create(tr.doc, pos, pos))
+              .setMeta(vimEnginePluginKey, { mode: "visualBlock", pendingTokens: [], visualAnchor: pos })
           );
         }
         return true;
